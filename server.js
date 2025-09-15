@@ -15,8 +15,6 @@ const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
-// A classe URL não é mais necessária após a correção.
-// const { URL } = require('url'); 
 
 const ORG = process.env.ORG_NOME || 'Recadastramento Servo Atitude Kids';
 const BRAND = {
@@ -29,24 +27,14 @@ const app = express();
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
 
-// ==================================================================
-// ✅ INÍCIO DA CORREÇÃO
-// ==================================================================
 // Infra
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const pool = new Pool({
-  // A connectionString já contém tudo: user, pass, host, port, db.
   connectionString: process.env.DATABASE_URL,
-  // Para ambientes de produção como Render/Heroku, é crucial forçar SSL.
-  // O rejectUnauthorized: false evita problemas de certificado nesses ambientes.
   ssl: {
     rejectUnauthorized: false,
   },
 });
-// ==================================================================
-// ✅ FIM DA CORREÇÃO
-// ==================================================================
-
 
 // Mail
 let transporter = null;
@@ -158,6 +146,9 @@ async function extractFromPdf(pdfBuffer) {
   return { cert_number, issued_at, expires_at, cac_result };
 }
 
+// ==================================================================
+// INÍCIO DAS ALTERAÇÕES VISUAIS
+// ==================================================================
 const page = (title, bodyHtml) => `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -173,24 +164,46 @@ const page = (title, bodyHtml) => `<!doctype html>
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
-<header class="bg-white border-b">
+<header class="bg-white border-b sticky top-0 z-10">
   <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
       <div class="text-lg font-semibold">${ORG}</div>
     </div>
     <nav class="text-sm">
-      <a href="/" class="mr-4">Início</a>
-      <a href="/cadastro" class="mr-4">Cadastro</a>
-      <a href="/login">Login</a>
-      <a href="/admin/login" class="ml-4 pl-4 border-l border-slate-200">Admin</a>
+      <button id="menu-btn" class="md:hidden p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
+        </svg>
+      </button>
+      
+      <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
+        <a href="/" class="hover:text-brand">Início</a>
+        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+        <a href="/login" class="hover:text-brand">Login</a>
+        <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
+      </div>
     </nav>
+  </div>
+  <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
+      <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
+      <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+      <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
+      <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
   </div>
 </header>
 <main class="max-w-5xl mx-auto px-4 py-8">
 ${bodyHtml}
 </main>
 <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
+
+<script>
+  const menuBtn = document.getElementById('menu-btn');
+  const mobileMenu = document.getElementById('menu-links-mobile');
+  menuBtn.addEventListener('click', () => {
+    mobileMenu.classList.toggle('hidden');
+  });
+</script>
 </body>
 </html>`;
 
@@ -209,26 +222,51 @@ const adminPage = (title, bodyHtml) => `<!doctype html>
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
-<header class="bg-white border-b">
+<header class="bg-white border-b sticky top-0 z-10">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
       <div class="text-lg font-semibold">${ORG}</div>
     </div>
     <nav class="text-sm">
-      <a href="/" class="mr-4">Início</a>
-      <a href="/cadastro" class="mr-4">Cadastro</a>
-      <a href="/login">Login</a>
-      <a href="/admin/login" class="ml-4 pl-4 border-l border-slate-200">Admin</a>
+        <button id="menu-btn" class="md:hidden p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
+          </svg>
+        </button>
+        
+        <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
+          <a href="/" class="hover:text-brand">Início</a>
+          <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+          <a href="/login" class="hover:text-brand">Login</a>
+          <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
+        </div>
     </nav>
+  </div>
+  <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
+      <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
+      <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+      <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
+      <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
   </div>
 </header>
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 ${bodyHtml}
 </main>
 <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
+
+<script>
+  const menuBtn = document.getElementById('menu-btn');
+  const mobileMenu = document.getElementById('menu-links-mobile');
+  menuBtn.addEventListener('click', () => {
+    mobileMenu.classList.toggle('hidden');
+  });
+</script>
 </body>
 </html>`;
+// ==================================================================
+// FIM DAS ALTERAÇÕES VISUAIS
+// ==================================================================
 
 // ===== Rotas Públicas =====
 app.get('/', (_req, res) => {
@@ -237,15 +275,19 @@ app.get('/', (_req, res) => {
       <div>
         <h1 class="text-3xl font-bold mb-4">Recadastramento Servo Atitude Kids</h1>
         <p class="mb-4">Para servir no ministério infantil, é necessário anexar a <strong>Certidão de Antecedentes Criminais (CAC)</strong>, aceitar o termo de privacidade (LGPD) e criar uma senha.</p>
-        <a href="/cadastro" class="btn-brand px-5 py-3 rounded-lg">Começar cadastro</a>
+        <div class="flex items-center gap-4">
+            <a href="/cadastro" class="btn-brand px-5 py-3 rounded-lg">Começar cadastro</a>
+            <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="text-sm link-brand underline">Emitir CAC no Gov.br</a>
+        </div>
       </div>
       <div class="bg-white border rounded-xl p-6">
+        <h3 class="font-semibold mb-3">Funcionalidades do Sistema:</h3>
         <ul class="space-y-2 text-sm">
-          <li>✔ Conta com senha e recuperação</li>
-          <li>✔ Upload obrigatório da CAC (PDF)</li>
-          <li>✔ Extração automática (nº, emissão, validade)</li>
-          <li>✔ Semáforo de status (verde/amarelo/vermelho)</li>
-          <li>✔ Painel Admin para acompanhamento</li>
+            <li>✔ Upload obrigatório da CAC (PDF)</li>
+            <li>✔ Extração automática de dados do documento</li>
+            <li>✔ Verificação automática de validade</li>
+            <li>✔ Painel individual para atualização de dados</li>
+            <li>✔ Painel de admin para acompanhamento geral</li>
         </ul>
       </div>
     </div>
