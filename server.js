@@ -20,7 +20,7 @@ const ORG = process.env.ORG_NOME || 'Recadastramento Servo Atitude Kids';
 const BRAND = {
   primary: process.env.BRAND_PRIMARY || '#4f46e5',
   accent: process.env.BRAND_ACCENT || '#22c55e',
-  logo: process.env.BRAND_LOGO_PATH || '/logo.svg',
+  logo: process.env.BRAND_LOGO_PATH || '/public/logo.svg',
 };
 
 const app = express();
@@ -161,6 +161,12 @@ const page = (title, bodyHtml) => `<!doctype html>
   .btn-brand{ background: var(--brand); color:#fff; }
   .btn-brand:hover{ filter: brightness(0.95); }
   .link-brand{ color: var(--brand); }
+  /* Estilo para o botão desabilitado */
+  .btn-brand:disabled {
+    background-color: #9ca3af; /* cinza */
+    cursor: not-allowed;
+    filter: none;
+  }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -200,8 +206,22 @@ ${bodyHtml}
 <script>
   const menuBtn = document.getElementById('menu-btn');
   const mobileMenu = document.getElementById('menu-links-mobile');
-  menuBtn.addEventListener('click', () => {
-    mobileMenu.classList.toggle('hidden');
+  if (menuBtn && mobileMenu) {
+    menuBtn.addEventListener('click', () => {
+      mobileMenu.classList.toggle('hidden');
+    });
+  }
+
+  // Script para desabilitar botão de formulário no envio
+  const forms = document.querySelectorAll('form');
+  forms.forEach(form => {
+    form.addEventListener('submit', (e) => {
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Processando...';
+      }
+    });
   });
 </script>
 </body>
@@ -258,9 +278,11 @@ ${bodyHtml}
 <script>
   const menuBtn = document.getElementById('menu-btn');
   const mobileMenu = document.getElementById('menu-links-mobile');
-  menuBtn.addEventListener('click', () => {
-    mobileMenu.classList.toggle('hidden');
-  });
+  if(menuBtn && mobileMenu) {
+    menuBtn.addEventListener('click', () => {
+      mobileMenu.classList.toggle('hidden');
+    });
+  }
 </script>
 </body>
 </html>`;
@@ -314,19 +336,25 @@ app.get('/cadastro', (_req, res) => {
   res.type('html').send(page('Cadastro', `
     <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-4">Crie sua conta</h2>
-      <form method="post" action="/cadastro" enctype="multipart/form-data" class="space-y-4">
-        <div><label class="block text-sm mb-1">Nome completo</label><input name="nome" required class="w-full border rounded px-3 py-2"/></div>
-        <div><label class="block text-sm mb-1">CPF</label><input name="cpf" required placeholder="000.000.000-00" class="w-full border rounded px-3 py-2"/></div>
-        <div><label class="block text-sm mb-1">E-mail</label><input name="email" type="email" required class="w-full border rounded px-3 py-2"/></div>
-        <div><label class="block text-sm mb-1">Senha</label><input name="password" type="password" required class="w-full border rounded px-3 py-2"/></div>
-        <div><label class="block text-sm mb-1">CAC (PDF até 2MB)</label><input type="file" name="cac_pdf" accept="application/pdf" required class="w-full"/></div>
-        <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Li e aceito o <a href="/termo-lgpd" target="_blank" class="link-brand underline">termo de consentimento</a>.</label></div>
-        <button class="btn-brand px-5 py-2.5 rounded">Cadastrar</button>
+      <form method="post" action="/cadastro" enctype="multipart/form-data">
+        <div class="space-y-4">
+          <div><label class="block text-sm mb-1">Nome completo</label><input name="nome" required class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm mb-1">CPF</label><input name="cpf" required placeholder="000.000.000-00" class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm mb-1">E-mail</label><input name="email" type="email" required class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm mb-1">Senha</label><input name="password" type="password" required class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm mb-1">CAC (PDF até 2MB)</label><input type="file" name="cac_pdf" accept="application/pdf" required class="w-full"/></div>
+          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Li e aceito o <a href="/termo-lgpd" target="_blank" class="link-brand underline">termo de consentimento</a>.</label></div>
+          <button type="submit" class="btn-brand px-5 py-2.5 rounded w-full">Cadastrar</button>
+        </div>
       </form>
     </div>
   `));
 });
 
+
+// ==================================================================
+// ✅ INÍCIO DA MELHORIA ANTI-DUPLICIDADE
+// ==================================================================
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
   try {
     const { nome, cpf, email, password, consent } = req.body;
@@ -334,8 +362,27 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
       return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
 
     const cpfClean = cpf.replace(/\D/g, '');
+    const emailClean = email.trim().toLowerCase();
+
+    // 1. Validação do CPF (já existia e está correta)
     if (!cpfValidator.isValid(cpfClean))
       return res.status(400).send(page('Erro', '<p>CPF inválido.</p>'));
+
+    // 2. Verifica se CPF ou E-mail já existem no banco ANTES de prosseguir
+    const checkQuery = 'SELECT * FROM cadastros WHERE cpf = $1 OR email = $2';
+    const { rows: existingUsers } = await pool.query(checkQuery, [cpfClean, emailClean]);
+
+    if (existingUsers.length > 0) {
+      let errorMessage = 'Já existe um cadastro com as informações fornecidas. ';
+      if (existingUsers[0].cpf === cpfClean) {
+        errorMessage += 'O CPF informado já está em uso. ';
+      }
+      if (existingUsers[0].email === emailClean) {
+        errorMessage += 'O e-mail informado já está em uso. ';
+      }
+      errorMessage += '<a href="/login" class="link-brand underline">Tente fazer login</a> ou <a href="/forgot" class="link-brand underline">recupere sua senha</a>.'
+      return res.status(409).send(page('Erro de Cadastro', `<p>${errorMessage}</p>`));
+    }
 
     if (req.file.mimetype !== 'application/pdf')
       return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
@@ -373,18 +420,23 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
       (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW(),NOW()) RETURNING id
     `;
-    const vals = [nome.trim(), cpfClean, email.trim(), password_hash, cert_number, (issued_at && issued_at.isValid()) ? issued_at.toISOString() : null, (expires_at && expires_at.isValid()) ? expires_at.toISOString() : null, status, key, pdf_sha256, cac_result];
+    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, (issued_at && issued_at.isValid()) ? issued_at.toISOString() : null, (expires_at && expires_at.isValid()) ? expires_at.toISOString() : null, status, key, pdf_sha256, cac_result];
     const { rows } = await pool.query(insert, vals);
 
-    const token = signToken({ volunteer_id: rows[0].id, email: email.trim() });
+    const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
     res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
 
     res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
   } catch (e) {
     console.error(e);
-    res.status(500).send(page('Erro', '<p>Erro ao processar cadastro.</p>'));
+    // Erro genérico para o usuário, mas log detalhado para o desenvolvedor
+    res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado ao processar o cadastro. Por favor, tente novamente.</p>'));
   }
 });
+// ==================================================================
+// ✅ FIM DA MELHORIA ANTI-DUPLICIDADE
+// ==================================================================
+
 
 // ===== Login voluntário =====
 app.get('/login', (_req, res) => {
@@ -394,7 +446,7 @@ app.get('/login', (_req, res) => {
       <form method="post" action="/login" class="space-y-3">
         <div><label class="block text-sm">E-mail</label><input name="email" type="email" class="w-full border rounded px-3 py-2" required/></div>
         <div><label class="block text-sm">Senha</label><input name="password" type="password" class="w-full border rounded px-3 py-2" required/></div>
-        <button class="btn-brand px-4 py-2 rounded">Entrar</button>
+        <button type="submit" class="btn-brand px-4 py-2 rounded w-full">Entrar</button>
       </form>
       <p class="text-sm mt-2"><a href="/forgot" class="link-brand underline">Esqueci minha senha</a></p>
     </div>
@@ -403,7 +455,7 @@ app.get('/login', (_req, res) => {
 
 app.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
-  const { rows } = await pool.query('SELECT id,password_hash FROM cadastros WHERE email=$1 LIMIT 1', [email?.trim()]);
+  const { rows } = await pool.query('SELECT id,password_hash FROM cadastros WHERE email=$1 LIMIT 1', [email?.trim().toLowerCase()]);
   if (!rows.length || !(await bcrypt.compare(password || '', rows[0].password_hash || '')))
     return res.send(page('Login', '<p>Credenciais inválidas.</p>'));
 
@@ -435,7 +487,7 @@ app.get('/meu/painel', requireVolunteer, async (req, res) => {
         <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
         <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
         <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
-        <button class="btn-brand px-4 py-2 rounded">Salvar</button>
+        <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
       </form>
       <p class="mt-4 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
     </div>
@@ -464,7 +516,7 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     const params = [];
     let idx = 1;
 
-    if (req.body.email) { updates.push(`email=$${idx++}`); params.push(req.body.email.trim()); }
+    if (req.body.email) { updates.push(`email=$${idx++}`); params.push(req.body.email.trim().toLowerCase()); }
 
     if (req.file) {
       if (req.file.mimetype !== 'application/pdf') return res.status(400).send('Envie um PDF válido.');
@@ -532,38 +584,45 @@ app.get('/forgot', (_req,res)=> {
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-3">Recuperar senha</h2>
       <form method="post" action="/forgot" class="space-y-3">
-        <div><label class="block text-sm">E-mail</label><input name="email" class="w-full border rounded px-3 py-2" required/></div>
-        <button class="btn-brand px-4 py-2 rounded">Enviar link</button>
+        <div><label class="block text-sm">E-mail</label><input name="email" type="email" class="w-full border rounded px-3 py-2" required/></div>
+        <button type="submit" class="btn-brand px-4 py-2 rounded">Enviar link</button>
       </form>
     </div>
   `));
 });
 
 app.post('/forgot', async (req,res)=> {
-  const email = (req.body.email||'').trim();
+  const email = (req.body.email||'').trim().toLowerCase();
   const { rows } = await pool.query('SELECT id FROM cadastros WHERE email=$1 LIMIT 1', [email]);
-  if (!rows.length) return res.send(page('OK', '<p>Se existir conta, enviaremos um e-mail.</p>'));
+  if (!rows.length) return res.send(page('OK', '<p>Se existir conta com este e-mail, enviaremos um link para recuperação de senha.</p>'));
 
   const token = crypto.randomBytes(24).toString('hex');
   await pool.query('UPDATE cadastros SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
   const link = `${process.env.APP_BASE_URL || ''}/reset?token=${token}`;
 
   if (transporter) {
-    await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email,
-      subject: 'Redefinição de senha', html: `Clique aqui para redefinir: <a href="${link}">${link}</a>` });
+    try {
+      await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email,
+        subject: 'Redefinição de senha', html: `Clique aqui para redefinir sua senha: <a href="${link}">${link}</a>` });
+    } catch (mailError) {
+        console.error("Erro ao enviar e-mail de recuperação:", mailError);
+    }
   }
 
-  res.send(page('OK', `<p>Se existir conta, enviaremos um e-mail. Link: <span class="text-xs">${link}</span></p>`));
+  res.send(page('OK', `<p>Se existir uma conta com o e-mail informado, um link para recuperação de senha foi enviado. Por favor, verifique sua caixa de entrada e spam.</p>`));
 });
 
 app.get('/reset', async (req,res)=> {
   const { rows } = await pool.query('SELECT id FROM cadastros WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [req.query.token]);
   if (!rows.length) return res.send(page('Reset', '<p>Link inválido ou expirado.</p>'));
   res.send(page('Definir nova senha', `
-    <form method="post" action="/reset?token=${req.query.token}" class="max-w-sm mx-auto bg-white border rounded-xl p-6 space-y-3">
-      <div><label class="block text-sm">Nova senha</label><input type="password" name="password" class="w-full border rounded px-3 py-2" required/></div>
-      <button class="btn-brand px-4 py-2 rounded">Salvar</button>
-    </form>
+    <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
+      <h2 class="text-xl font-semibold mb-3">Definir Nova Senha</h2>
+      <form method="post" action="/reset?token=${req.query.token}" class="space-y-3">
+        <div><label class="block text-sm">Nova senha</label><input type="password" name="password" class="w-full border rounded px-3 py-2" required/></div>
+        <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
+      </form>
+    </div>
   `));
 });
 
@@ -573,7 +632,7 @@ app.post('/reset', async (req,res)=> {
   if (!rows.length) return res.send(page('Reset', '<p>Link inválido ou expirado.</p>'));
   const hash = await bcrypt.hash(req.body.password || '', 10);
   await pool.query('UPDATE cadastros SET password_hash=$1, reset_token=NULL, reset_expires=NULL WHERE id=$2', [hash, rows[0].id]);
-  res.send(page('OK', '<p>Senha atualizada. <a href="/login" class="link-brand underline">Entrar</a></p>'));
+  res.send(page('OK', '<p>Senha atualizada com sucesso. <a href="/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
 });
 // ===== Admin =====
 app.get('/admin/login', (_req, res) => {
@@ -583,7 +642,7 @@ app.get('/admin/login', (_req, res) => {
       <form method="post" action="/admin/login" class="space-y-3">
         <div><label class="block text-sm">E-mail</label><input name="email" class="w-full border rounded px-3 py-2" required/></div>
         <div><label class="block text-sm">Senha</label><input type="password" name="password" class="w-full border rounded px-3 py-2" required/></div>
-        <button class="btn-brand px-4 py-2 rounded">Entrar</button>
+        <button type="submit" class="btn-brand px-4 py-2 rounded">Entrar</button>
       </form>
     </div>
   `));
