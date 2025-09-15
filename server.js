@@ -15,6 +15,7 @@ const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const { URL } = require('url'); // Importa a classe URL
 
 const ORG = process.env.ORG_NOME || 'Recadastramento Servo Atitude Kids';
 const BRAND = {
@@ -32,6 +33,8 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSL === 'require' ? { rejectUnauthorized: false } : false,
+  // ✅ CORREÇÃO PARA AMBIENTES DE HOSPEDAGEM (RENDER): Força a resolução para IPv4
+  host: new URL(process.env.DATABASE_URL).hostname,
 });
 
 // Mail
@@ -144,7 +147,6 @@ async function extractFromPdf(pdfBuffer) {
   return { cert_number, issued_at, expires_at, cac_result };
 }
 
-// Layout para páginas públicas
 const page = (title, bodyHtml) => `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -181,7 +183,6 @@ ${bodyHtml}
 </body>
 </html>`;
 
-// ✅ MELHORIA: Layout exclusivo e mais largo para as páginas de administração
 const adminPage = (title, bodyHtml) => `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -799,13 +800,13 @@ app.post('/admin/invite', requireSuper, async (req,res)=>{
   if (transporter) {
     await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email, subject: 'Convite para Admin - Atitude Kids', html: `Finalize seu acesso: <a href="${link}">${link}</a>` });
   }
-  res.send(page('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`));
+  res.send(adminPage('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`));
 });
 
 app.get('/admin/first-access', async (req,res)=>{
   const token = req.query.token;
   const { rows } = await pool.query('SELECT id,email FROM admins WHERE invite_token=$1 AND invite_expires>NOW() LIMIT 1', [token]);
-  if (!rows.length) return res.send(page('Convite inválido', '<p>Link inválido ou expirado.</p>'));
+  if (!rows.length) return res.send(adminPage('Convite inválido', '<p>Link inválido ou expirado.</p>'));
   res.send(adminPage('Definir senha do Admin', `
     <form method="post" action="/admin/first-access?token=${token}" class="max-w-sm mx-auto bg-white border rounded-xl p-6 space-y-3">
       <div><label class="block text-sm">Senha</label><input type="password" name="password" class="w-full border rounded px-3 py-2" required/></div>
@@ -817,7 +818,7 @@ app.get('/admin/first-access', async (req,res)=>{
 app.post('/admin/first-access', async (req,res)=>{
   const token = req.query.token;
   const { rows } = await pool.query('SELECT id FROM admins WHERE invite_token=$1 AND invite_expires>NOW() LIMIT 1', [token]);
-  if (!rows.length) return res.send(page('Convite inválido', '<p>Link inválido ou expirado.</p>'));
+  if (!rows.length) return res.send(adminPage('Convite inválido', '<p>Link inválido ou expirado.</p>'));
   const hash = await bcrypt.hash(req.body.password || '', 10);
   await pool.query('UPDATE admins SET password_hash=$1, invite_token=NULL, invite_expires=NULL WHERE id=$2', [hash, rows[0].id]);
   res.send(adminPage('OK', '<p>Senha definida. <a href="/admin/login" class="link-brand underline">Entrar</a></p>'));
