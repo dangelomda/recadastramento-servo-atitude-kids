@@ -15,7 +15,8 @@ const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
-const { URL } = require('url'); // Importa a classe URL
+// A classe URL não é mais necessária após a correção.
+// const { URL } = require('url'); 
 
 const ORG = process.env.ORG_NOME || 'Recadastramento Servo Atitude Kids';
 const BRAND = {
@@ -28,14 +29,24 @@ const app = express();
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
 
+// ==================================================================
+// ✅ INÍCIO DA CORREÇÃO
+// ==================================================================
 // Infra
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const pool = new Pool({
+  // A connectionString já contém tudo: user, pass, host, port, db.
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.PGSSL === 'require' ? { rejectUnauthorized: false } : false,
-  // ✅ CORREÇÃO PARA AMBIENTES DE HOSPEDAGEM (RENDER): Força a resolução para IPv4
-  host: new URL(process.env.DATABASE_URL).hostname,
+  // Para ambientes de produção como Render/Heroku, é crucial forçar SSL.
+  // O rejectUnauthorized: false evita problemas de certificado nesses ambientes.
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
+// ==================================================================
+// ✅ FIM DA CORREÇÃO
+// ==================================================================
+
 
 // Mail
 let transporter = null;
