@@ -146,6 +146,9 @@ async function extractFromPdf(pdfBuffer) {
   return { cert_number, issued_at, expires_at, cac_result };
 }
 
+// ==================================================================
+// INÍCIO DAS ALTERAÇÕES VISUAIS (COM SCRIPT DE VALIDAÇÃO)
+// ==================================================================
 const page = (title, bodyHtml) => `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -200,6 +203,7 @@ ${bodyHtml}
 <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
 
 <script>
+  // Script do menu responsivo
   const menuBtn = document.getElementById('menu-btn');
   const mobileMenu = document.getElementById('menu-links-mobile');
   if (menuBtn && mobileMenu) {
@@ -208,6 +212,7 @@ ${bodyHtml}
     });
   }
 
+  // Script para desabilitar botão no envio
   const forms = document.querySelectorAll('form');
   forms.forEach(form => {
     form.addEventListener('submit', (e) => {
@@ -218,6 +223,24 @@ ${bodyHtml}
       }
     });
   });
+
+  // --- NOVO SCRIPT PARA VERIFICAR TAMANHO DO ARQUIVO ---
+  // Ele procura por qualquer input de arquivo com o nome 'cac_pdf'
+  const fileInput = document.querySelector('input[type="file"][name="cac_pdf"]');
+  if (fileInput) {
+    fileInput.addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (file) {
+        // 2 * 1024 * 1024 = 2MB
+        if (file.size > 2 * 1024 * 1024) {
+          alert('Erro: O arquivo é muito grande! O tamanho máximo permitido é 2MB.');
+          // Limpa o campo para o usuário não conseguir enviar o arquivo grande
+          event.target.value = ''; 
+        }
+      }
+    });
+  }
+  // --- FIM DO NOVO SCRIPT ---
 </script>
 </body>
 </html>`;
@@ -480,7 +503,7 @@ app.get('/meu/painel', requireVolunteer, async (req, res) => {
   `));
 });
 
-// --- NOVA ROTA PARA O USUÁRIO VER O PDF ---
+// --- ROTA PARA O USUÁRIO VER O PDF ---
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
   try {
     const id = req.vol.volunteer_id;
@@ -652,7 +675,6 @@ app.post('/reset', async (req,res)=> {
 });
 
 // ===== Admin =====
-// (O restante do código de Admin permanece o mesmo)
 app.get('/admin/login', (_req, res) => {
   res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -668,13 +690,11 @@ app.get('/admin/login', (_req, res) => {
 
 app.post('/admin/login', async (req,res)=>{
   const { email, password } = req.body || {};
-  // super admin via env
   if (email === process.env.SUPER_ADMIN_EMAIL && password === process.env.SUPER_ADMIN_PASS) {
     const t = signToken({ role: 'admin:super', email, admin_id: 0 }, 'SESSION_SECRET');
     res.cookie('admin_session', t, { httpOnly: true, sameSite:'lax', secure:true });
     return res.redirect('/admin/painel');
   }
-  // admins do banco
   const { rows } = await pool.query('SELECT id,password_hash,role FROM admins WHERE email=$1 LIMIT 1', [email?.trim()]);
   if (!rows.length || !(await bcrypt.compare(password || '', rows[0].password_hash || '')))
     return res.send(adminPage('Login', '<p>Credenciais inválidas.</p>'));
@@ -804,183 +824,186 @@ app.post('/admin/delete-servo', requireAdmin, async (req, res) => {
     }
 });
 
+// (O restante do código de Admin e Cron permanece o mesmo)
+// ...
+
 app.get('/admin/admins', requireSuper, async (req,res)=>{
-  const adminData = verifyToken(req.cookies['admin_session']);
-  const { rows } = await pool.query('SELECT id,email,role,created_at FROM admins ORDER BY created_at DESC');
-  const tr = rows.map(a=>{
-    let deleteForm = '';
-    let roleEditor = `<td class="py-2 px-3">${a.role}</td>`;
-
-    if (adminData.role === 'admin:super' && a.email.toLowerCase() !== adminData.email.toLowerCase() && a.email !== process.env.SUPER_ADMIN_EMAIL) {
-        deleteForm = `
-            <form action="/admin/delete-admin" method="post" onsubmit="return confirm('Tem certeza que deseja excluir este administrador?');">
-                <input type="hidden" name="id" value="${a.id}" />
-                <button type="submit" class="text-red-500 hover:text-red-700 text-xl">🗑️</button>
-            </form>
-        `;
-        roleEditor = `
-            <td class="py-2 px-3">
-                <form action="/admin/update-admin-role" method="post" class="flex items-center gap-2">
-                    <input type="hidden" name="id" value="${a.id}" />
-                    <select name="role" class="border rounded text-xs p-1">
-                        <option value="normal" ${a.role === 'normal' ? 'selected' : ''}>Normal</option>
-                        <option value="super" ${a.role === 'super' ? 'selected' : ''}>Super</option>
-                    </select>
-                    <button class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600">Salvar</button>
-                </form>
-            </td>
-        `;
-    }
-
-    return `<tr class="border-b">
-        <td class="py-2 px-3">${deleteForm}</td>
-        <td class="py-2 px-3">${a.id}</td>
-        <td class="py-2 px-3">${a.email}</td>
-        ${roleEditor}
-        <td class="py-2 px-3">${dayjs(a.created_at).format('DD/MM/YYYY')}</td>
-    </tr>`
-  }).join('');
-  res.send(adminPage('Admins', `
-    <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold">Administradores</h2>
-        <a href="/admin/painel" class="link-brand underline text-sm">← Voltar para o Painel</a>
-    </div>
-    <div class="bg-white border rounded-xl p-6">
-      <form method="post" action="/admin/invite" class="flex flex-wrap gap-2 mb-4 items-center">
-        <input name="email" type="email" placeholder="email@exemplo.com" class="border rounded px-3 py-2 flex-1" required/>
-        <button class="btn-brand px-4 py-2 rounded">Convidar</button>
-      </form>
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead class="bg-slate-100"><tr>
-            <th class="px-3 py-2 text-left">Ação</th>
-            <th class="px-3 py-2 text-left">ID</th>
-            <th class="px-3 py-2 text-left">E-mail</th>
-            <th class="px-3 py-2 text-left">Perfil</th>
-            <th class="px-3 py-2 text-left">Criado</th>
-          </tr></thead>
-          <tbody>${tr || `<tr><td colspan="5" class="py-6 text-center text-slate-500">Sem admins</td></tr>`}</tbody>
-        </table>
+    const adminData = verifyToken(req.cookies['admin_session']);
+    const { rows } = await pool.query('SELECT id,email,role,created_at FROM admins ORDER BY created_at DESC');
+    const tr = rows.map(a=>{
+      let deleteForm = '';
+      let roleEditor = `<td class="py-2 px-3">${a.role}</td>`;
+  
+      if (adminData.role === 'admin:super' && a.email.toLowerCase() !== adminData.email.toLowerCase() && a.email !== process.env.SUPER_ADMIN_EMAIL) {
+          deleteForm = `
+              <form action="/admin/delete-admin" method="post" onsubmit="return confirm('Tem certeza que deseja excluir este administrador?');">
+                  <input type="hidden" name="id" value="${a.id}" />
+                  <button type="submit" class="text-red-500 hover:text-red-700 text-xl">🗑️</button>
+              </form>
+          `;
+          roleEditor = `
+              <td class="py-2 px-3">
+                  <form action="/admin/update-admin-role" method="post" class="flex items-center gap-2">
+                      <input type="hidden" name="id" value="${a.id}" />
+                      <select name="role" class="border rounded text-xs p-1">
+                          <option value="normal" ${a.role === 'normal' ? 'selected' : ''}>Normal</option>
+                          <option value="super" ${a.role === 'super' ? 'selected' : ''}>Super</option>
+                      </select>
+                      <button class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600">Salvar</button>
+                  </form>
+              </td>
+          `;
+      }
+  
+      return `<tr class="border-b">
+          <td class="py-2 px-3">${deleteForm}</td>
+          <td class="py-2 px-3">${a.id}</td>
+          <td class="py-2 px-3">${a.email}</td>
+          ${roleEditor}
+          <td class="py-2 px-3">${dayjs(a.created_at).format('DD/MM/YYYY')}</td>
+      </tr>`
+    }).join('');
+    res.send(adminPage('Admins', `
+      <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold">Administradores</h2>
+          <a href="/admin/painel" class="link-brand underline text-sm">← Voltar para o Painel</a>
       </div>
-    </div>
-  `));
-});
-
-app.post('/admin/update-admin-role', requireSuper, async (req, res) => {
-    try {
-        const { id, role } = req.body;
-        const adminData = verifyToken(req.cookies['admin_session']);
-
-        if (!id || !['normal', 'super'].includes(role)) {
-            return res.status(400).send('Dados inválidos.');
-        }
-
-        if (adminData && adminData.admin_id && id == adminData.admin_id) {
-            return res.status(403).send('Você não pode alterar seu próprio perfil.');
-        }
-
-        const { rows } = await pool.query('SELECT email FROM admins WHERE id = $1', [id]);
-        if (rows.length > 0 && rows[0].email === process.env.SUPER_ADMIN_EMAIL) {
-            return res.status(403).send('O perfil do super administrador principal não pode ser alterado.');
-        }
-
-        await pool.query('UPDATE admins SET role = $1 WHERE id = $2', [role, id]);
-        res.redirect('/admin/admins');
-    } catch (e) {
-        console.error(e);
-        res.status(500).send('Erro ao atualizar perfil do administrador.');
-    }
-});
-
-app.post('/admin/delete-admin', requireSuper, async (req, res) => {
-    try {
-        const { id } = req.body;
-        const adminData = verifyToken(req.cookies['admin_session']);
-
-        if (!id) {
-            return res.status(400).send('ID do admin não fornecido.');
-        }
-        
-        if (adminData && adminData.admin_id && id == adminData.admin_id) {
-            return res.status(403).send('Você não pode se auto-excluir.');
-        }
-
-        const { rows } = await pool.query('SELECT role, email FROM admins WHERE id = $1', [id]);
-        if (rows.length > 0 && (rows[0].role === 'super' || rows[0].email === process.env.SUPER_ADMIN_EMAIL)) {
-            return res.status(403).send('Este administrador não pode ser excluído.');
-        }
-
-        await pool.query('DELETE FROM admins WHERE id = $1', [id]);
-        res.redirect('/admin/admins');
-
-    } catch (e) {
-        console.error(e);
-        res.status(500).send('Erro ao deletar o administrador.');
-    }
-});
-
-app.post('/admin/invite', requireSuper, async (req,res)=>{
-  const email = (req.body.email||'').trim();
-  const role = 'normal';
-  const token = crypto.randomBytes(24).toString('hex');
+      <div class="bg-white border rounded-xl p-6">
+        <form method="post" action="/admin/invite" class="flex flex-wrap gap-2 mb-4 items-center">
+          <input name="email" type="email" placeholder="email@exemplo.com" class="border rounded px-3 py-2 flex-1" required/>
+          <button class="btn-brand px-4 py-2 rounded">Convidar</button>
+        </form>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-100"><tr>
+              <th class="px-3 py-2 text-left">Ação</th>
+              <th class="px-3 py-2 text-left">ID</th>
+              <th class="px-3 py-2 text-left">E-mail</th>
+              <th class="px-3 py-2 text-left">Perfil</th>
+              <th class="px-3 py-2 text-left">Criado</th>
+            </tr></thead>
+            <tbody>${tr || `<tr><td colspan="5" class="py-6 text-center text-slate-500">Sem admins</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+    `));
+  });
   
-  await pool.query('INSERT INTO admins(email, invite_token, invite_expires, role) VALUES($1,$2, NOW()+INTERVAL \'2 days\', $3) ON CONFLICT (email) DO UPDATE SET invite_token=$2, invite_expires=NOW()+INTERVAL \'2 days\'', [email, token, role]);
+  app.post('/admin/update-admin-role', requireSuper, async (req, res) => {
+      try {
+          const { id, role } = req.body;
+          const adminData = verifyToken(req.cookies['admin_session']);
   
-  const link = `${process.env.APP_BASE_URL || ''}/admin/first-access?token=${token}`;
-  if (transporter) {
-    await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email, subject: 'Convite para Admin - Atitude Kids', html: `Finalize seu acesso: <a href="${link}">${link}</a>` });
-  }
-  res.send(adminPage('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`));
-});
-
-app.get('/admin/first-access', async (req,res)=>{
-  const token = req.query.token;
-  const { rows } = await pool.query('SELECT id,email FROM admins WHERE invite_token=$1 AND invite_expires>NOW() LIMIT 1', [token]);
-  if (!rows.length) return res.send(adminPage('Convite inválido', '<p>Link inválido ou expirado.</p>'));
-  res.send(adminPage('Definir senha do Admin', `
-    <form method="post" action="/admin/first-access?token=${token}" class="max-w-sm mx-auto bg-white border rounded-xl p-6 space-y-3">
-      <div><label class="block text-sm">Senha</label><input type="password" name="password" class="w-full border rounded px-3 py-2" required/></div>
-      <button class="btn-brand px-4 py-2 rounded">Salvar</button>
-    </form>
-  `));
-});
-
-app.post('/admin/first-access', async (req,res)=>{
-  const token = req.query.token;
-  const { rows } = await pool.query('SELECT id FROM admins WHERE invite_token=$1 AND invite_expires>NOW() LIMIT 1', [token]);
-  if (!rows.length) return res.send(adminPage('Convite inválido', '<p>Link inválido ou expirado.</p>'));
-  const hash = await bcrypt.hash(req.body.password || '', 10);
-  await pool.query('UPDATE admins SET password_hash=$1, invite_token=NULL, invite_expires=NULL WHERE id=$2', [hash, rows[0].id]);
-  res.send(adminPage('OK', '<p>Senha definida. <a href="/admin/login" class="link-brand underline">Entrar</a></p>'));
-});
-
-app.get('/admin/ver-pdf/:id', requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
-
-    if (!rows.length || !rows[0].pdf_path) {
-      return res.status(404).send('PDF não encontrado.');
-    }
-
-    const key = rows[0].pdf_path;
-    const { data, error } = await supabase.storage
-        .from(process.env.SUPABASE_BUCKET)
-        .download(key);
-
-    if (error) throw error;
+          if (!id || !['normal', 'super'].includes(role)) {
+              return res.status(400).send('Dados inválidos.');
+          }
+  
+          if (adminData && adminData.admin_id && id == adminData.admin_id) {
+              return res.status(403).send('Você não pode alterar seu próprio perfil.');
+          }
+  
+          const { rows } = await pool.query('SELECT email FROM admins WHERE id = $1', [id]);
+          if (rows.length > 0 && rows[0].email === process.env.SUPER_ADMIN_EMAIL) {
+              return res.status(403).send('O perfil do super administrador principal não pode ser alterado.');
+          }
+  
+          await pool.query('UPDATE admins SET role = $1 WHERE id = $2', [role, id]);
+          res.redirect('/admin/admins');
+      } catch (e) {
+          console.error(e);
+          res.status(500).send('Erro ao atualizar perfil do administrador.');
+      }
+  });
+  
+  app.post('/admin/delete-admin', requireSuper, async (req, res) => {
+      try {
+          const { id } = req.body;
+          const adminData = verifyToken(req.cookies['admin_session']);
+  
+          if (!id) {
+              return res.status(400).send('ID do admin não fornecido.');
+          }
+          
+          if (adminData && adminData.admin_id && id == adminData.admin_id) {
+              return res.status(403).send('Você não pode se auto-excluir.');
+          }
+  
+          const { rows } = await pool.query('SELECT role, email FROM admins WHERE id = $1', [id]);
+          if (rows.length > 0 && (rows[0].role === 'super' || rows[0].email === process.env.SUPER_ADMIN_EMAIL)) {
+              return res.status(403).send('Este administrador não pode ser excluído.');
+          }
+  
+          await pool.query('DELETE FROM admins WHERE id = $1', [id]);
+          res.redirect('/admin/admins');
+  
+      } catch (e) {
+          console.error(e);
+          res.status(500).send('Erro ao deletar o administrador.');
+      }
+  });
+  
+  app.post('/admin/invite', requireSuper, async (req,res)=>{
+    const email = (req.body.email||'').trim();
+    const role = 'normal';
+    const token = crypto.randomBytes(24).toString('hex');
     
-    const buffer = Buffer.from(await data.arrayBuffer());
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', buffer.length);
-    res.send(buffer);
-
-  } catch (e) {
-    console.error('Erro ao buscar PDF no Supabase:', e);
-    res.status(500).send('Erro ao carregar o arquivo.');
-  }
-});
+    await pool.query('INSERT INTO admins(email, invite_token, invite_expires, role) VALUES($1,$2, NOW()+INTERVAL \'2 days\', $3) ON CONFLICT (email) DO UPDATE SET invite_token=$2, invite_expires=NOW()+INTERVAL \'2 days\'', [email, token, role]);
+    
+    const link = `${process.env.APP_BASE_URL || ''}/admin/first-access?token=${token}`;
+    if (transporter) {
+      await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email, subject: 'Convite para Admin - Atitude Kids', html: `Finalize seu acesso: <a href="${link}">${link}</a>` });
+    }
+    res.send(adminPage('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`));
+  });
+  
+  app.get('/admin/first-access', async (req,res)=>{
+    const token = req.query.token;
+    const { rows } = await pool.query('SELECT id,email FROM admins WHERE invite_token=$1 AND invite_expires>NOW() LIMIT 1', [token]);
+    if (!rows.length) return res.send(adminPage('Convite inválido', '<p>Link inválido ou expirado.</p>'));
+    res.send(adminPage('Definir senha do Admin', `
+      <form method="post" action="/admin/first-access?token=${token}" class="max-w-sm mx-auto bg-white border rounded-xl p-6 space-y-3">
+        <div><label class="block text-sm">Senha</label><input type="password" name="password" class="w-full border rounded px-3 py-2" required/></div>
+        <button class="btn-brand px-4 py-2 rounded">Salvar</button>
+      </form>
+    `));
+  });
+  
+  app.post('/admin/first-access', async (req,res)=>{
+    const token = req.query.token;
+    const { rows } = await pool.query('SELECT id FROM admins WHERE invite_token=$1 AND invite_expires>NOW() LIMIT 1', [token]);
+    if (!rows.length) return res.send(adminPage('Convite inválido', '<p>Link inválido ou expirado.</p>'));
+    const hash = await bcrypt.hash(req.body.password || '', 10);
+    await pool.query('UPDATE admins SET password_hash=$1, invite_token=NULL, invite_expires=NULL WHERE id=$2', [hash, rows[0].id]);
+    res.send(adminPage('OK', '<p>Senha definida. <a href="/admin/login" class="link-brand underline">Entrar</a></p>'));
+  });
+  
+  app.get('/admin/ver-pdf/:id', requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
+  
+      if (!rows.length || !rows[0].pdf_path) {
+        return res.status(404).send('PDF não encontrado.');
+      }
+  
+      const key = rows[0].pdf_path;
+      const { data, error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .download(key);
+  
+      if (error) throw error;
+      
+      const buffer = Buffer.from(await data.arrayBuffer());
+  
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', buffer.length);
+      res.send(buffer);
+  
+    } catch (e) {
+      console.error('Erro ao buscar PDF no Supabase:', e);
+      res.status(500).send('Erro ao carregar o arquivo.');
+    }
+  });
 
 // ===== Cron housekeeping =====
 app.post('/cron/housekeeping', async (req, res) => {
