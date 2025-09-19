@@ -118,7 +118,7 @@ async function extractFromPdf(pdfBuffer) {
       const parsedDate = dayjs(match[1], 'DD/MM/YYYY');
       if (parsedDate.isValid()) {
         issued_at = parsedDate;
-        break; 
+        break;  
       }
     }
   }
@@ -146,9 +146,6 @@ async function extractFromPdf(pdfBuffer) {
   return { cert_number, issued_at, expires_at, cac_result };
 }
 
-// ==================================================================
-// INÍCIO DAS ALTERAÇÕES VISUAIS
-// ==================================================================
 const page = (title, bodyHtml) => `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -161,9 +158,8 @@ const page = (title, bodyHtml) => `<!doctype html>
   .btn-brand{ background: var(--brand); color:#fff; }
   .btn-brand:hover{ filter: brightness(0.95); }
   .link-brand{ color: var(--brand); }
-  /* Estilo para o botão desabilitado */
   .btn-brand:disabled {
-    background-color: #9ca3af; /* cinza */
+    background-color: #9ca3af;
     cursor: not-allowed;
     filter: none;
   }
@@ -212,7 +208,6 @@ ${bodyHtml}
     });
   }
 
-  // Script para desabilitar botão de formulário no envio
   const forms = document.querySelectorAll('form');
   forms.forEach(form => {
     form.addEventListener('submit', (e) => {
@@ -286,9 +281,6 @@ ${bodyHtml}
 </script>
 </body>
 </html>`;
-// ==================================================================
-// FIM DAS ALTERAÇÕES VISUAIS
-// ==================================================================
 
 // ===== Rotas Públicas =====
 app.get('/', (_req, res) => {
@@ -351,50 +343,43 @@ app.get('/cadastro', (_req, res) => {
   `));
 });
 
-
-// ==================================================================
-// ✅ INÍCIO DA MELHORIA ANTI-DUPLICIDADE
-// ==================================================================
-app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
+app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   try {
     const { nome, cpf, email, password, consent } = req.body;
-    if (!nome || !cpf || !email || !password || consent !== 'on' || !req.file)
-      return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
-
     const cpfClean = cpf.replace(/\D/g, '');
     const emailClean = email.trim().toLowerCase();
 
-    // 1. Validação do CPF (já existia e está correta)
+    const { rows: existingUsers } = await pool.query(
+      'SELECT id FROM cadastros WHERE cpf = $1 OR email = $2',
+      [cpfClean, emailClean]
+    );
+
+    if (existingUsers.length > 0) {
+      return res.status(409).send(page('Erro', '<p class="text-red-600 font-semibold">CPF ou E-mail já cadastrado em nosso sistema. Se você já tem uma conta, por favor, <a href="/login" class="link-brand underline">faça o login</a>.</p>'));
+    }
+
+    if (!nome || !cpf || !email || !password || consent !== 'on' || !req.file)
+      return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
+    
     if (!cpfValidator.isValid(cpfClean))
       return res.status(400).send(page('Erro', '<p>CPF inválido.</p>'));
 
-    // 2. Verifica se CPF ou E-mail já existem no banco ANTES de prosseguir
-    const checkQuery = 'SELECT * FROM cadastros WHERE cpf = $1 OR email = $2';
-    const { rows: existingUsers } = await pool.query(checkQuery, [cpfClean, emailClean]);
-
-    if (existingUsers.length > 0) {
-      let errorMessage = 'Já existe um cadastro com as informações fornecidas. ';
-      if (existingUsers[0].cpf === cpfClean) {
-        errorMessage += 'O CPF informado já está em uso. ';
-      }
-      if (existingUsers[0].email === emailClean) {
-        errorMessage += 'O e-mail informado já está em uso. ';
-      }
-      errorMessage += '<a href="/login" class="link-brand underline">Tente fazer login</a> ou <a href="/forgot" class="link-brand underline">recupere sua senha</a>.'
-      return res.status(409).send(page('Erro de Cadastro', `<p>${errorMessage}</p>`));
-    }
-
     if (req.file.mimetype !== 'application/pdf')
       return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
-
+    
     const password_hash = await bcrypt.hash(password, 10);
     const pdfBuffer = req.file.buffer;
-    const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
     
     const { cert_number, issued_at, expires_at, cac_result } = await extractFromPdf(pdfBuffer);
 
+    if (!cert_number || !issued_at || !issued_at.isValid()) {
+      return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
+    }
+    
+    const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
+    
     let status = 'em_revisao';
-    if (issued_at && expires_at && issued_at.isValid()) {
+    if (issued_at && expires_at) {
       const now = dayjs();
       if (now.isAfter(expires_at)) {
         status = 'inapto';
@@ -407,7 +392,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
       }
     }
 
-    const key = `cac/${Date.now()}_${cert_number || 'sem-numero'}.pdf`;
+    const key = `cac/${Date.now()}_${cert_number}.pdf`;
     
     const { error: uploadError } = await supabase.storage
         .from(process.env.SUPABASE_BUCKET)
@@ -420,7 +405,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
       (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW(),NOW()) RETURNING id
     `;
-    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, (issued_at && issued_at.isValid()) ? issued_at.toISOString() : null, (expires_at && expires_at.isValid()) ? expires_at.toISOString() : null, status, key, pdf_sha256, cac_result];
+    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result];
     const { rows } = await pool.query(insert, vals);
 
     const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
@@ -428,15 +413,9 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res) => {
 
     res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
   } catch (e) {
-    console.error(e);
-    // Erro genérico para o usuário, mas log detalhado para o desenvolvedor
-    res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado ao processar o cadastro. Por favor, tente novamente.</p>'));
+    next(e);
   }
 });
-// ==================================================================
-// ✅ FIM DA MELHORIA ANTI-DUPLICIDADE
-// ==================================================================
-
 
 // ===== Login voluntário =====
 app.get('/login', (_req, res) => {
@@ -464,6 +443,7 @@ app.post('/login', async (req, res) => {
   await pool.query('UPDATE cadastros SET last_login_at=NOW() WHERE id=$1', [rows[0].id]);
   res.redirect('/meu/painel');
 });
+
 // ===== Painel do voluntário =====
 app.get('/meu/painel', requireVolunteer, async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
@@ -482,21 +462,57 @@ app.get('/meu/painel', requireVolunteer, async (req, res) => {
         <li><strong>Emitida em:</strong> ${issued}</li>
         <li><strong>Válida até:</strong> ${exp}</li>
       </ul>
-      <h3 class="font-semibold mb-2">Atualizar dados</h3>
-      <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
-        <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
-        <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
-        <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
-        <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
-      </form>
-      <p class="mt-4 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
+      
+      ${r.pdf_path ? `<p><a href="/meu/ver-pdf" target="_blank" class="text-sm link-brand underline">Visualizar CAC enviado</a></p>` : ''}
+      
+      <div class="mt-6 pt-6 border-t">
+        <h3 class="font-semibold mb-2">Atualizar dados</h3>
+        <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
+          <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
+          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
+          <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
+        </form>
+      </div>
+
+      <p class="mt-6 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
     </div>
   `));
 });
 
-app.get('/logout', (req,res)=>{ 
-  res.clearCookie('vol_session'); 
-  res.redirect('/login'); 
+// --- NOVA ROTA PARA O USUÁRIO VER O PDF ---
+app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
+  try {
+    const id = req.vol.volunteer_id;
+    const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
+
+    if (!rows.length || !rows[0].pdf_path) {
+      return res.status(404).send('PDF não encontrado.');
+    }
+
+    const key = rows[0].pdf_path;
+    const { data, error } = await supabase.storage
+        .from(process.env.SUPABASE_BUCKET)
+        .download(key);
+
+    if (error) throw error;
+    
+    const buffer = Buffer.from(await data.arrayBuffer());
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+
+  } catch (e) {
+    console.error('Erro ao buscar PDF do usuário no Supabase:', e);
+    res.status(500).send('Erro ao carregar o arquivo.');
+  }
+});
+
+
+app.get('/logout', (req,res)=>{  
+  res.clearCookie('vol_session');  
+  res.redirect('/login');  
 });
 
 app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (req, res) => {
@@ -634,7 +650,9 @@ app.post('/reset', async (req,res)=> {
   await pool.query('UPDATE cadastros SET password_hash=$1, reset_token=NULL, reset_expires=NULL WHERE id=$2', [hash, rows[0].id]);
   res.send(page('OK', '<p>Senha atualizada com sucesso. <a href="/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
 });
+
 // ===== Admin =====
+// (O restante do código de Admin permanece o mesmo)
 app.get('/admin/login', (_req, res) => {
   res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -936,7 +954,6 @@ app.post('/admin/first-access', async (req,res)=>{
   res.send(adminPage('OK', '<p>Senha definida. <a href="/admin/login" class="link-brand underline">Entrar</a></p>'));
 });
 
-// Rota para visualizar PDF do Supabase
 app.get('/admin/ver-pdf/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -982,6 +999,19 @@ app.post('/cron/housekeeping', async (req, res) => {
     console.error(e);
     res.status(500).send('erro housekeeping');
   }
+});
+
+// ===== Middleware de Tratamento de Erros =====
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).send(page('Erro no Upload', '<p class="text-red-600 font-semibold">O arquivo enviado é muito grande. O tamanho máximo permitido é de 2MB.</p>'));
+    }
+    return res.status(400).send(page('Erro no Upload', `<p>Ocorreu um erro durante o upload do arquivo: ${err.message}</p>`));
+  }
+
+  console.error(err);
+  res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado no servidor. Por favor, tente novamente.</p>'));
 });
 
 // Start server
