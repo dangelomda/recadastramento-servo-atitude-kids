@@ -480,6 +480,10 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
 
 // ===== Login voluntário =====
 app.get('/login', (_req, res) => {
+  // CORREÇÃO: Limpa qualquer sessão ativa ao chegar na tela de login
+  res.clearCookie('vol_session');
+  res.clearCookie('admin_session');
+  
   res.send(page('Login', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Login do voluntário</h2>
@@ -743,6 +747,10 @@ app.post('/reset', async (req,res)=> {
 
 // ===== Admin =====
 app.get('/admin/login', (_req, res) => {
+  // CORREÇÃO: Limpa qualquer sessão ativa ao chegar na tela de login do admin
+  res.clearCookie('vol_session');
+  res.clearCookie('admin_session');
+
   res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Acesso do administrador</h2>
