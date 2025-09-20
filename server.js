@@ -57,6 +57,9 @@ app.set('trust proxy', 1);
 // Upload: 2 MB em memória
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
 
+// Constante para o tempo de sessão
+const SESSION_MAX_AGE = 10 * 60 * 1000; // 10 minutos em milissegundos
+
 // Helpers
 function signToken(payload, secretEnv = 'SESSION_SECRET') {
   const secret = process.env[secretEnv] || 'dev-secret';
@@ -79,23 +82,42 @@ function setNoCacheHeaders(req, res, next) {
   res.setHeader('Expires', '0');
   next();
 }
+
+// ===== Middlewares de Autenticação com SESSÃO DESLIZANTE =====
 function requireAdmin(req, res, next) {
   const t = req.cookies['admin_session'];
   const data = verifyToken(t);
-  if (data && data.role && data.role.startsWith('admin')) return next();
+  if (data && data.role && data.role.startsWith('admin')) {
+    // Renova a sessão por mais 10 minutos
+    res.cookie('admin_session', t, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
+    return next();
+  }
   return res.redirect('/admin/login');
 }
-function requireSuper(req,res,next){
-  const t=req.cookies['admin_session']; const d=verifyToken(t);
-  if (d && d.role==='admin:super') return next();
+
+function requireSuper(req, res, next) {
+  const t = req.cookies['admin_session'];
+  const d = verifyToken(t);
+  if (d && d.role === 'admin:super') {
+    // Renova a sessão por mais 10 minutos
+    res.cookie('admin_session', t, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
+    return next();
+  }
   return res.status(403).send('Somente super admin.');
 }
+
 function requireVolunteer(req, res, next) {
   const t = req.cookies['vol_session'];
   const data = verifyToken(t);
-  if (data && data.volunteer_id) { req.vol = data; return next(); }
+  if (data && data.volunteer_id) {
+    req.vol = data;
+    // Renova a sessão por mais 10 minutos
+    res.cookie('vol_session', t, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
+    return next();
+  }
   return res.redirect('/login');
 }
+
 function badge(status, cacResult) {
   if (status === 'inapto') return '🔴 Inapto';
   if (status === 'atencao') return '🟡 Atenção';
@@ -147,117 +169,132 @@ async function extractFromPdf(pdfBuffer) {
   return { cert_number, issued_at, expires_at, cac_result, pdf_cpf };
 }
 
-const page = (title, bodyHtml) => `<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${title}</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-  :root{ --brand:${BRAND.primary}; --accent:${BRAND.accent}; }
-  .btn-brand{ background: var(--brand); color:#fff; }
-  .btn-brand:hover{ filter: brightness(0.95); }
-  .link-brand{ color: var(--brand); }
-  .btn-brand:disabled {
-    background-color: #9ca3af;
-    cursor: not-allowed;
-    filter: none;
-  }
-</style>
-</head>
-<body class="bg-slate-50 text-slate-800">
-<header class="bg-white border-b sticky top-0 z-10">
-  <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
-      <div class="text-lg font-semibold">${ORG}</div>
-    </div>
-    <nav class="text-sm">
-      <button id="menu-btn" class="md:hidden p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
-        </svg>
-      </button>
-      
-      <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
-        <a href="/" class="hover:text-brand">Início</a>
-        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
-        <a href="/login" class="hover:text-brand">Login</a>
-        <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
+// ===== FUNÇÃO page (Layout Unificado) =====
+const page = (title, bodyHtml, isProtected = false) => {
+    const clientSideSecurityScript = isProtected
+      ? `
+      <script>
+        window.addEventListener('pageshow', function(event) {
+          if (!document.cookie.includes('vol_session=')) {
+            window.location.href = '/login';
+          }
+        });
+      </script>
+      `
+      : '';
+
+    return `<!doctype html>
+    <html lang="pt-BR">
+    <head>
+    <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>${title}</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    ${clientSideSecurityScript}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root{ --brand:${BRAND.primary}; --accent:${BRAND.accent}; }
+      .btn-brand{ background: var(--brand); color:#fff; }
+      .btn-brand:hover{ filter: brightness(0.95); }
+      .link-brand{ color: var(--brand); }
+      .btn-brand:disabled {
+        background-color: #9ca3af;
+        cursor: not-allowed;
+        filter: none;
+      }
+    </style>
+    </head>
+    <body class="bg-slate-50 text-slate-800">
+    <header class="bg-white border-b sticky top-0 z-10">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
+          <div class="text-lg font-semibold">${ORG}</div>
+        </div>
+        <nav class="text-sm">
+          <button id="menu-btn" class="md:hidden p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
+            </svg>
+          </button>
+          
+          <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
+            <a href="/" class="hover:text-brand">Início</a>
+            <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+            <a href="/login" class="hover:text-brand">Login</a>
+            <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
+          </div>
+        </nav>
       </div>
-    </nav>
-  </div>
-  <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
-      <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
-      <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
-      <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
-      <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
-  </div>
-</header>
-<main class="max-w-5xl mx-auto px-4 py-8">
-${bodyHtml}
-</main>
-<footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
+      <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
+          <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
+          <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+          <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
+          <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
+      </div>
+    </header>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    ${bodyHtml}
+    </main>
+    <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
 
-<script>
-  const menuBtn = document.getElementById('menu-btn');
-  const mobileMenu = document.getElementById('menu-links-mobile');
-  if (menuBtn && mobileMenu) {
-    menuBtn.addEventListener('click', () => {
-      mobileMenu.classList.toggle('hidden');
-    });
-  }
-
-  const forms = document.querySelectorAll('form');
-  forms.forEach(form => {
-    form.addEventListener('submit', (e) => {
-      const submitButton = form.querySelector('button[type="submit"]');
-      if (submitButton) {
-        submitButton.disabled = true;
-        submitButton.textContent = 'Processando...';
+    <script>
+      const menuBtn = document.getElementById('menu-btn');
+      const mobileMenu = document.getElementById('menu-links-mobile');
+      if (menuBtn && mobileMenu) {
+        menuBtn.addEventListener('click', () => {
+          mobileMenu.classList.toggle('hidden');
+        });
       }
-    });
-  });
 
-  const fileInput = document.querySelector('input[type="file"][name="cac_pdf"]');
-  if (fileInput) {
-    fileInput.addEventListener('change', function(event) {
-      const file = event.target.files[0];
-      if (file) {
-        if (file.size > 2 * 1024 * 1024) {
-          alert('Erro: O arquivo é muito grande! O tamanho máximo permitido é 2MB.');
-          event.target.value = ''; 
-        }
+      const forms = document.querySelectorAll('form');
+      forms.forEach(form => {
+        form.addEventListener('submit', (e) => {
+          const submitButton = form.querySelector('button[type="submit"]');
+          if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.textContent = 'Processando...';
+          }
+        });
+      });
+
+      const fileInput = document.querySelector('input[type="file"][name="cac_pdf"]');
+      if (fileInput) {
+        fileInput.addEventListener('change', function(event) {
+          const file = event.target.files[0];
+          if (file) {
+            if (file.size > 2 * 1024 * 1024) {
+              alert('Erro: O arquivo é muito grande! O tamanho máximo permitido é 2MB.');
+              event.target.value = ''; 
+            }
+          }
+        });
       }
-    });
-  }
 
-  document.querySelectorAll('.password-toggle-container').forEach(container => {
-    const input = container.querySelector('input[type="password"], input[type="text"]');
-    const toggle = container.querySelector('.password-toggle-icon');
-    const eyeIcon = toggle.querySelector('.eye-icon');
-    const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
+      document.querySelectorAll('.password-toggle-container').forEach(container => {
+        const input = container.querySelector('input[type="password"], input[type="text"]');
+        const toggle = container.querySelector('.password-toggle-icon');
+        const eyeIcon = toggle.querySelector('.eye-icon');
+        const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
 
-    toggle.addEventListener('click', () => {
-      if (input.type === 'password') {
-        input.type = 'text';
-        eyeIcon.classList.add('hidden');
-        eyeSlashIcon.classList.remove('hidden');
-      } else {
-        input.type = 'password';
-        eyeIcon.classList.remove('hidden');
-        eyeSlashIcon.classList.add('hidden');
-      }
-    });
-  });
-</script>
-</body>
-</html>`;
+        toggle.addEventListener('click', () => {
+          if (input.type === 'password') {
+            input.type = 'text';
+            eyeIcon.classList.add('hidden');
+            eyeSlashIcon.classList.remove('hidden');
+          } else {
+            input.type = 'password';
+            eyeIcon.classList.remove('hidden');
+            eyeSlashIcon.classList.add('hidden');
+          }
+        });
+      });
+    </script>
+    </body>
+    </html>`;
+}
 
-// ===== NOVA FUNÇÃO adminPage MODIFICADA =====
+// ===== FUNÇÃO adminPage (Layout Unificado) =====
 const adminPage = (title, bodyHtml, admin = null) => {
-    // Define os links de navegação com base no status de login do admin
     const navLinksDesktop = admin && admin.email
       ? `
         <div class="flex items-center gap-4">
@@ -283,6 +320,18 @@ const adminPage = (title, bodyHtml, admin = null) => {
         <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
         <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
       `;
+    
+    const clientSideSecurityScript = admin && admin.email 
+      ? `
+      <script>
+        window.addEventListener('pageshow', function(event) {
+          if (!document.cookie.includes('admin_session=')) {
+            window.location.href = '/admin/login';
+          }
+        });
+      </script>
+      ` 
+      : '';
 
     return `<!doctype html>
     <html lang="pt-BR">
@@ -290,6 +339,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
     <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
     <title>${title}</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    ${clientSideSecurityScript}
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       :root{ --brand:${BRAND.primary}; --accent:${BRAND.accent}; }
@@ -358,7 +408,8 @@ const adminPage = (title, bodyHtml, admin = null) => {
     </html>`;
 };
 
-
+// O restante do código abaixo não precisa de alterações, mas deve ser incluído no seu arquivo.
+// ... (código das rotas /cadastro, /login, /admin, etc.) ...
 // ===== Rotas Públicas =====
 app.get('/', (_req, res) => {
   res.type('html').send(page('Início', `
@@ -496,7 +547,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
     const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result];
     const { rows } = await pool.query(insert, vals);
     const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
-    res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
+    res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
     res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
   } catch (e) {
     next(e);
@@ -505,7 +556,6 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
 
 // ===== Login voluntário =====
 app.get('/login', (_req, res) => {
-  // CORREÇÃO: Limpa qualquer sessão ativa ao chegar na tela de login
   res.clearCookie('vol_session');
   res.clearCookie('admin_session');
   
@@ -538,7 +588,7 @@ app.post('/login', async (req, res) => {
     return res.send(page('Login', '<p>Credenciais inválidas.</p>'));
 
   const token = signToken({ volunteer_id: rows[0].id, email: email.trim() });
-  res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
+  res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
   await pool.query('UPDATE cadastros SET last_login_at=NOW() WHERE id=$1', [rows[0].id]);
   res.redirect('/meu/painel');
 });
@@ -586,7 +636,7 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
 
       <p class="mt-6 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
     </div>
-  `));
+  `, true));
 });
 
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
@@ -797,18 +847,19 @@ app.get('/admin/login', (_req, res) => {
   `));
 });
 
+// ===== Login Admin (MODIFICADO para incluir tempo de sessão) =====
 app.post('/admin/login', async (req,res)=>{
   const { email, password } = req.body || {};
   if (email === process.env.SUPER_ADMIN_EMAIL && password === process.env.SUPER_ADMIN_PASS) {
     const t = signToken({ role: 'admin:super', email, admin_id: 0 }, 'SESSION_SECRET');
-    res.cookie('admin_session', t, { httpOnly: true, sameSite:'lax', secure:true });
+    res.cookie('admin_session', t, { httpOnly: true, sameSite:'lax', secure:true, maxAge: SESSION_MAX_AGE });
     return res.redirect('/admin/painel');
   }
   const { rows } = await pool.query('SELECT id,password_hash,role FROM admins WHERE email=$1 LIMIT 1', [email?.trim()]);
   if (!rows.length || !(await bcrypt.compare(password || '', rows[0].password_hash || '')))
     return res.send(adminPage('Login', '<p>Credenciais inválidas.</p>'));
   const token = signToken({ role: `admin:${rows[0].role}`, email: email.trim(), admin_id: rows[0].id });
-  res.cookie('admin_session', token, { httpOnly: true, sameSite:'lax', secure:true });
+  res.cookie('admin_session', token, { httpOnly: true, sameSite:'lax', secure:true, maxAge: SESSION_MAX_AGE });
   res.redirect('/admin/painel');
 });
 
