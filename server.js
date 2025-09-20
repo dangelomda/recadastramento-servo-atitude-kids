@@ -324,7 +324,7 @@ ${baseHead(title)}
       <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
   </div>
 </header>
-<main class="max-w-5xl mx-auto px-4 py-8">
+<main class="max-w-7xl mx-auto px-4 py-8">
 ${bodyHtml}
 </main>
 <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
@@ -444,7 +444,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
           ${navLinksMobile}
       </div>
     </header>
-    <main class="max-w-5xl mx-auto px-4 py-8">
+    <main class="max-w-7xl mx-auto px-4 py-8">
     ${bodyHtml}
     </main>
     <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
