@@ -83,12 +83,11 @@ function setNoCacheHeaders(req, res, next) {
   next();
 }
 
-// ===== Middlewares de Autenticação com SESSÃO DESLIZANTE =====
+// ===== Middlewares de Autenticação com SESSÃO DESLIZANTE (CORRIGIDOS) =====
 function requireAdmin(req, res, next) {
   const t = req.cookies['admin_session'];
   const data = verifyToken(t);
   if (data && data.role && data.role.startsWith('admin')) {
-    // Renova a sessão por mais 10 minutos
     res.cookie('admin_session', t, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
     return next();
   }
@@ -99,7 +98,6 @@ function requireSuper(req, res, next) {
   const t = req.cookies['admin_session'];
   const d = verifyToken(t);
   if (d && d.role === 'admin:super') {
-    // Renova a sessão por mais 10 minutos
     res.cookie('admin_session', t, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
     return next();
   }
@@ -111,12 +109,12 @@ function requireVolunteer(req, res, next) {
   const data = verifyToken(t);
   if (data && data.volunteer_id) {
     req.vol = data;
-    // Renova a sessão por mais 10 minutos
     res.cookie('vol_session', t, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
     return next();
   }
   return res.redirect('/login');
 }
+
 
 function badge(status, cacResult) {
   if (status === 'inapto') return '🔴 Inapto';
@@ -408,8 +406,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
     </html>`;
 };
 
-// O restante do código abaixo não precisa de alterações, mas deve ser incluído no seu arquivo.
-// ... (código das rotas /cadastro, /login, /admin, etc.) ...
+
 // ===== Rotas Públicas =====
 app.get('/', (_req, res) => {
   res.type('html').send(page('Início', `
@@ -480,8 +477,10 @@ app.get('/cadastro', (_req, res) => {
   `));
 });
 
+// ===== Rota de Cadastro com tempo de sessão (CORRIGIDO) =====
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   try {
+    // ... (código existente da rota)
     const { nome, cpf, email, password, consent } = req.body;
     const cpfClean = cpf.replace(/\D/g, '');
     const emailClean = email.trim().toLowerCase();
@@ -547,7 +546,10 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
     const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result];
     const { rows } = await pool.query(insert, vals);
     const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
+    
+    // Define o cookie com tempo de expiração de 10 minutos
     res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true, maxAge: SESSION_MAX_AGE });
+    
     res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
   } catch (e) {
     next(e);
@@ -847,7 +849,6 @@ app.get('/admin/login', (_req, res) => {
   `));
 });
 
-// ===== Login Admin (MODIFICADO para incluir tempo de sessão) =====
 app.post('/admin/login', async (req,res)=>{
   const { email, password } = req.body || {};
   if (email === process.env.SUPER_ADMIN_EMAIL && password === process.env.SUPER_ADMIN_PASS) {
