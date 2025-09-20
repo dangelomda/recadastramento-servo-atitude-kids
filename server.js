@@ -73,15 +73,12 @@ function verifyToken(token, secretEnv = 'SESSION_SECRET') {
   if (sig !== s) return null;
   try { return JSON.parse(Buffer.from(b, 'base64url').toString()); } catch { return null; }
 }
-
-// NOVA FUNÇÃO (MIDDLEWARE) PARA IMPEDIR CACHE PELO NAVEGADOR
 function setNoCacheHeaders(req, res, next) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   next();
 }
-
 function requireAdmin(req, res, next) {
   const t = req.cookies['admin_session'];
   const data = verifyToken(t);
@@ -567,24 +564,16 @@ app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
   try {
     const id = req.vol.volunteer_id;
     const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
-
     if (!rows.length || !rows[0].pdf_path) {
       return res.status(404).send('PDF não encontrado.');
     }
-
     const key = rows[0].pdf_path;
-    const { data, error } = await supabase.storage
-        .from(process.env.SUPABASE_BUCKET)
-        .download(key);
-
+    const { data, error } = await supabase.storage.from(process.env.SUPABASE_BUCKET).download(key);
     if (error) throw error;
-    
     const buffer = Buffer.from(await data.arrayBuffer());
-
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Length', buffer.length);
     res.send(buffer);
-
   } catch (e) {
     console.error('Erro ao buscar PDF do usuário no Supabase:', e);
     res.status(500).send('Erro ao carregar o arquivo.');
@@ -599,7 +588,6 @@ app.get('/logout', (req,res)=>{
 app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (req, res, next) => {
   try {
     const id = req.vol.volunteer_id;
-
     const { rows: currentUserRows } = await pool.query('SELECT cpf, pdf_path, status FROM cadastros WHERE id = $1', [id]);
     if (currentUserRows.length === 0) {
       return res.status(404).send(page('Erro', '<p>Usuário não encontrado.</p>'));
@@ -638,10 +626,7 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
       }
 
       const key = `cac/${Date.now()}_${cert_number || 'sem-numero'}.pdf`;
-      const { error: uploadError } = await supabase.storage
-          .from(process.env.SUPABASE_BUCKET)
-          .upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-
+      const { error: uploadError } = await supabase.storage.from(process.env.SUPABASE_BUCKET).upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
       if (uploadError) throw uploadError;
 
       const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
@@ -690,6 +675,19 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
 });
 
 // ===== Reset de senha voluntário =====
+app.get('/forgot', (_req,res)=> {
+  res.send(page('Esqueci minha senha', `
+    <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
+      <h2 class="text-xl font-semibold mb-3">Recuperar senha</h2>
+      <p class="text-sm mb-4">Digite o e-mail associado à sua conta e enviaremos um link para redefinir sua senha.</p>
+      <form method="post" action="/forgot" class="space-y-3">
+        <div><label class="block text-sm">E-mail</label><input name="email" type="email" class="w-full border rounded px-3 py-2" required/></div>
+        <button type="submit" class="btn-brand px-4 py-2 rounded w-full">Enviar link de recuperação</button>
+      </form>
+    </div>
+  `));
+});
+
 app.post('/forgot', async (req,res)=> {
   const email = (req.body.email||'').trim().toLowerCase();
   const { rows } = await pool.query('SELECT id FROM cadastros WHERE email=$1 LIMIT 1', [email]);
