@@ -16,6 +16,9 @@ const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
 
+// =====================
+// Config & Branding
+// =====================
 const ORG = process.env.ORG_NOME || 'Recadastramento Servo Atitude Kids';
 const BRAND = {
   primary: process.env.BRAND_PRIMARY || '#4f46e5',
@@ -23,6 +26,13 @@ const BRAND = {
   logo: process.env.BRAND_LOGO_PATH || '/public/logo.svg',
 };
 
+// Sessão/atividade
+const MAX_IDLE_MS = 10 * 60 * 1000; // 10 minutos de inatividade
+const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // TTL máximo do token (12h) como hard cap
+
+// =====================
+// App base
+// =====================
 const app = express();
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
@@ -57,45 +67,114 @@ app.set('trust proxy', 1);
 // Upload: 2 MB em memória
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
 
-// Helpers
+// =====================
+// Helpers - Token & Sessão
+// =====================
+function nowMs() { return Date.now(); }
+
 function signToken(payload, secretEnv = 'SESSION_SECRET') {
   const secret = process.env[secretEnv] || 'dev-secret';
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const iat = nowMs();
+  const exp = iat + TOKEN_TTL_MS;
+  const full = { ...payload, iat, exp, lastActivity: iat };
+  const body = Buffer.from(JSON.stringify(full)).toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
   return `${header}.${body}.${sig}`;
 }
+
 function verifyToken(token, secretEnv = 'SESSION_SECRET') {
   const secret = process.env[secretEnv] || 'dev-secret';
   const [h, b, s] = (token || '').split('.');
   if (!h || !b || !s) return null;
   const sig = crypto.createHmac('sha256', secret).update(`${h}.${b}`).digest('base64url');
   if (sig !== s) return null;
-  try { return JSON.parse(Buffer.from(b, 'base64url').toString()); } catch { return null; }
+  try {
+    const data = JSON.parse(Buffer.from(b, 'base64url').toString());
+    if (!data.exp || data.exp < nowMs()) return null; // TTL universal
+    return data;
+  } catch {
+    return null;
+  }
 }
+
+function refreshActivityCookie(kind, data) {
+  // kind: 'admin' | 'vol'
+  // reemite cookie com lastActivity atualizada
+  const updated = { ...data, lastActivity: nowMs() };
+  const token = signToken(updated);
+  return { name: kind === 'admin' ? 'admin_session' : 'vol_session', token };
+}
+
+function isIdle(data) {
+  if (!data || !data.lastActivity) return true;
+  return (nowMs() - data.lastActivity) > MAX_IDLE_MS;
+}
+
+function clearAllSessions(res) {
+  res.clearCookie('vol_session');
+  res.clearCookie('admin_session');
+}
+
+// No-cache para telas sensíveis
 function setNoCacheHeaders(req, res, next) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   next();
 }
+
+// Proteções de rota com idle check e renovação
 function requireAdmin(req, res, next) {
   const t = req.cookies['admin_session'];
   const data = verifyToken(t);
-  if (data && data.role && data.role.startsWith('admin')) return next();
-  return res.redirect('/admin/login');
+  if (!data || !data.role || !data.role.startsWith('admin')) {
+    return res.redirect('/admin/login');
+  }
+  if (isIdle(data)) {
+    clearAllSessions(res);
+    return res.redirect('/admin/login');
+  }
+  // renova atividade
+  const { name, token } = refreshActivityCookie('admin', data);
+  res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+  req.admin = data;
+  return next();
 }
-function requireSuper(req,res,next){
-  const t=req.cookies['admin_session']; const d=verifyToken(t);
-  if (d && d.role==='admin:super') return next();
-  return res.status(403).send('Somente super admin.');
+
+function requireSuper(req, res, next) {
+  const t = req.cookies['admin_session']; 
+  const d = verifyToken(t);
+  if (!d || d.role !== 'admin:super') {
+    return res.status(403).send('Somente super admin.');
+  }
+  if (isIdle(d)) {
+    clearAllSessions(res);
+    return res.redirect('/admin/login');
+  }
+  const { name, token } = refreshActivityCookie('admin', d);
+  res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+  req.admin = d;
+  return next();
 }
+
 function requireVolunteer(req, res, next) {
   const t = req.cookies['vol_session'];
   const data = verifyToken(t);
-  if (data && data.volunteer_id) { req.vol = data; return next(); }
-  return res.redirect('/login');
+  if (!data || !data.volunteer_id) {
+    return res.redirect('/login');
+  }
+  if (isIdle(data)) {
+    clearAllSessions(res);
+    return res.redirect('/login');
+  }
+  // renova atividade
+  const { name, token } = refreshActivityCookie('vol', data);
+  res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+  req.vol = data;
+  return next();
 }
+
 function badge(status, cacResult) {
   if (status === 'inapto') return '🔴 Inapto';
   if (status === 'atencao') return '🟡 Atenção';
@@ -104,6 +183,9 @@ function badge(status, cacResult) {
   return '⚪ Em revisão';
 }
 
+// =====================
+// PDF parsing
+// =====================
 async function extractFromPdf(pdfBuffer) {
   const pdfData = await pdfParse(pdfBuffer);
   const text = (pdfData.text || '').toUpperCase().replace(/\s+/g, ' ');
@@ -147,9 +229,10 @@ async function extractFromPdf(pdfBuffer) {
   return { cert_number, issued_at, expires_at, cac_result, pdf_cpf };
 }
 
-const page = (title, bodyHtml) => `<!doctype html>
-<html lang="pt-BR">
-<head>
+// =====================
+// Page templates
+// =====================
+const baseHead = (title) => `
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>${title}</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -165,6 +248,52 @@ const page = (title, bodyHtml) => `<!doctype html>
     filter: none;
   }
 </style>
+`;
+
+// códigos utilitários para evitar BFCache (navegar voltar/avançar)
+const antiBFCacheScript = `
+  // Se a página veio do BFCache, recarrega para forçar verificação de sessão
+  window.addEventListener('pageshow', function(e){
+    if (e.persisted) {
+      window.location.reload();
+    }
+  });
+`;
+
+function activityHeartbeatScript(kind) {
+  // kind: 'vol' | 'admin' | 'public'
+  return `
+  (function(){
+    const SESSION_KIND='${kind}';
+    const PING_URL='/auth/ping';
+    let lastSent=0;
+    let pending=false;
+    const DEBOUNCE=3000; // evita flood
+    function ping(){
+      const now=Date.now();
+      if (pending || (now-lastSent)<DEBOUNCE) return;
+      pending=true;
+      fetch(PING_URL, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ kind: SESSION_KIND })
+      }).finally(()=>{ pending=false; lastSent=Date.now(); });
+    }
+    ['click','keydown','mousemove','scroll','touchstart','visibilitychange'].forEach(evt => {
+      window.addEventListener(evt, () => {
+        if (document.visibilityState !== 'hidden') ping();
+      }, {passive:true});
+    });
+    // ping inicial
+    ping();
+  })();
+  `;
+}
+
+const page = (title, bodyHtml) => `<!doctype html>
+<html lang="pt-BR">
+<head>
+${baseHead(title)}
 </head>
 <body class="bg-slate-50 text-slate-800">
 <header class="bg-white border-b sticky top-0 z-10">
@@ -201,6 +330,7 @@ ${bodyHtml}
 <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
 
 <script>
+  ${antiBFCacheScript}
   const menuBtn = document.getElementById('menu-btn');
   const mobileMenu = document.getElementById('menu-links-mobile');
   if (menuBtn && mobileMenu) {
@@ -251,13 +381,15 @@ ${bodyHtml}
       }
     });
   });
+
+  // Heartbeat em páginas públicas (não fará nada no servidor se não houver sessão)
+  ${activityHeartbeatScript('public')}
 </script>
 </body>
 </html>`;
 
-// ===== NOVA FUNÇÃO adminPage MODIFICADA =====
+// ===== adminPage (header consistente e estado logado) =====
 const adminPage = (title, bodyHtml, admin = null) => {
-    // Define os links de navegação com base no status de login do admin
     const navLinksDesktop = admin && admin.email
       ? `
         <div class="flex items-center gap-4">
@@ -287,20 +419,11 @@ const adminPage = (title, bodyHtml, admin = null) => {
     return `<!doctype html>
     <html lang="pt-BR">
     <head>
-    <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <title>${title}</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      :root{ --brand:${BRAND.primary}; --accent:${BRAND.accent}; }
-      .btn-brand{ background: var(--brand); color:#fff; }
-      .btn-brand:hover{ filter: brightness(0.95); }
-      .link-brand{ color: var(--brand); }
-    </style>
+    ${baseHead(title)}
     </head>
     <body class="bg-slate-50 text-slate-800">
     <header class="bg-white border-b sticky top-0 z-10">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
           <div class="text-lg font-semibold">${ORG}</div>
@@ -321,12 +444,13 @@ const adminPage = (title, bodyHtml, admin = null) => {
           ${navLinksMobile}
       </div>
     </header>
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="max-w-5xl mx-auto px-4 py-8">
     ${bodyHtml}
     </main>
     <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
 
     <script>
+      ${antiBFCacheScript}
       const menuBtn = document.getElementById('menu-btn');
       const mobileMenu = document.getElementById('menu-links-mobile');
       if(menuBtn && mobileMenu) {
@@ -353,13 +477,17 @@ const adminPage = (title, bodyHtml, admin = null) => {
           }
         });
       });
+
+      // Heartbeat para admin
+      ${activityHeartbeatScript('admin')}
     </script>
     </body>
     </html>`;
 };
 
-
-// ===== Rotas Públicas =====
+// =====================
+// Rotas Públicas
+// =====================
 app.get('/', (_req, res) => {
   res.type('html').send(page('Início', `
     <div class="grid md:grid-cols-2 gap-8 items-center">
@@ -400,7 +528,9 @@ app.get('/termo-lgpd', (_req, res) => {
   `));
 });
 
-// ===== Cadastro de voluntário =====
+// =====================
+// Cadastro de voluntário
+// =====================
 app.get('/cadastro', (_req, res) => {
   res.type('html').send(page('Cadastro', `
     <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
@@ -503,12 +633,12 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   }
 });
 
-// ===== Login voluntário =====
-app.get('/login', (_req, res) => {
-  // CORREÇÃO: Limpa qualquer sessão ativa ao chegar na tela de login
-  res.clearCookie('vol_session');
-  res.clearCookie('admin_session');
-  
+// =====================
+// Login voluntário
+// =====================
+app.get('/login', setNoCacheHeaders, (_req, res) => {
+  // Limpa qualquer sessão ativa ao chegar na tela de login
+  clearAllSessions(res);
   res.send(page('Login', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Login do voluntário</h2>
@@ -537,13 +667,15 @@ app.post('/login', async (req, res) => {
   if (!rows.length || !(await bcrypt.compare(password || '', rows[0].password_hash || '')))
     return res.send(page('Login', '<p>Credenciais inválidas.</p>'));
 
-  const token = signToken({ volunteer_id: rows[0].id, email: email.trim() });
+  const token = signToken({ volunteer_id: rows[0].id, email: (email || '').trim().toLowerCase() });
   res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
   await pool.query('UPDATE cadastros SET last_login_at=NOW() WHERE id=$1', [rows[0].id]);
   res.redirect('/meu/painel');
 });
 
-// ===== Painel do voluntário =====
+// =====================
+// Painel do voluntário
+// =====================
 app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
   const r = rows[0];
@@ -610,7 +742,7 @@ app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
 });
 
 app.get('/logout', (req,res)=>{  
-  res.clearCookie('vol_session');  
+  clearAllSessions(res);  
   res.redirect('/login');  
 });
 
@@ -703,8 +835,10 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
   }
 });
 
-// ===== Reset de senha voluntário =====
-app.get('/forgot', (_req,res)=> {
+// =====================
+// Reset de senha voluntário
+// =====================
+app.get('/forgot', setNoCacheHeaders, (_req,res)=> {
   res.send(page('Esqueci minha senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-3">Recuperar senha</h2>
@@ -770,10 +904,11 @@ app.post('/reset', async (req,res)=> {
   res.send(page('OK', '<p>Senha atualizada com sucesso. <a href="/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
 });
 
-// ===== Admin =====
-app.get('/admin/login', (_req, res) => {
-  res.clearCookie('vol_session');
-  res.clearCookie('admin_session');
+// =====================
+// Admin
+// =====================
+app.get('/admin/login', setNoCacheHeaders, (_req, res) => {
+  clearAllSessions(res);
 
   res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -812,8 +947,8 @@ app.post('/admin/login', async (req,res)=>{
   res.redirect('/admin/painel');
 });
 
-// ===== Reset de senha Admin =====
-app.get('/admin/forgot', (_req, res) => {
+// Reset de senha Admin
+app.get('/admin/forgot', setNoCacheHeaders, (_req, res) => {
   res.send(adminPage('Esqueci minha senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-3">Recuperar senha de Administrador</h2>
@@ -854,7 +989,7 @@ app.post('/admin/forgot', async (req, res, next) => {
   }
 });
 
-app.get('/admin/reset', async (req, res, next) => {
+app.get('/admin/reset', setNoCacheHeaders, async (req, res, next) => {
   try {
     const { rows } = await pool.query('SELECT id FROM admins WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [req.query.token]);
     if (!rows.length) return res.send(adminPage('Reset', '<p>Link inválido ou expirado.</p>'));
@@ -898,7 +1033,7 @@ app.post('/admin/reset', async (req, res, next) => {
 });
 
 app.get('/admin/logout', (req, res) => {
-  res.clearCookie('admin_session');
+  clearAllSessions(res);
   res.redirect('/admin/login');
 });
 
@@ -1207,6 +1342,34 @@ app.get('/admin/admins', requireSuper, setNoCacheHeaders, async (req,res)=>{
     }
   });
 
+// =====================
+// Heartbeat de atividade (renova sessão a cada interação)
+// =====================
+app.post('/auth/ping', (req, res) => {
+  const kind = (req.body && req.body.kind) || 'public';
+  if (kind === 'admin') {
+    const t = req.cookies['admin_session'];
+    const data = verifyToken(t);
+    if (data && !isIdle(data)) {
+      const { name, token } = refreshActivityCookie('admin', data);
+      res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+    }
+  } else if (kind === 'vol') {
+    const t = req.cookies['vol_session'];
+    const data = verifyToken(t);
+    if (data && !isIdle(data)) {
+      const { name, token } = refreshActivityCookie('vol', data);
+      res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+    }
+  }
+  // sempre no-store
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.json({ ok: true });
+});
+
+// =====================
+// Housekeeping
+// =====================
 app.post('/cron/housekeeping', async (req, res) => {
   if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) return res.status(401).send('unauthorized');
   try {
@@ -1225,6 +1388,9 @@ app.post('/cron/housekeeping', async (req, res) => {
   }
 });
 
+// =====================
+// Erros
+// =====================
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
@@ -1237,5 +1403,7 @@ app.use((err, req, res, next) => {
   res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado no servidor. Por favor, tente novamente.</p>'));
 });
 
+// =====================
 // Start server
+// =====================
 app.listen(process.env.PORT || 3000, () => console.log(`On-line na porta ${process.env.PORT || 3000}`));
