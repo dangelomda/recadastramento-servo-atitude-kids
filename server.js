@@ -641,7 +641,7 @@ app.get('/login', setNoCacheHeaders, (_req, res) => {
   clearAllSessions(res);
   res.send(page('Login', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
-      <h2 class="text-xl font-semibold mb-4">Login do voluntário</h2>
+      <h2 class="text-xl font-semibold mb-4">Login do Servo</h2>
       <form method="post" action="/login" class="space-y-3">
         <div><label class="block text-sm">E-mail</label><input name="email" type="email" class="w-full border rounded px-3 py-2" required/></div>
         <div>
