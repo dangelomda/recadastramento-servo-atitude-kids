@@ -73,6 +73,15 @@ function verifyToken(token, secretEnv = 'SESSION_SECRET') {
   if (sig !== s) return null;
   try { return JSON.parse(Buffer.from(b, 'base64url').toString()); } catch { return null; }
 }
+
+// NOVA FUNÇÃO (MIDDLEWARE) PARA IMPEDIR CACHE PELO NAVEGADOR
+function setNoCacheHeaders(req, res, next) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+}
+
 function requireAdmin(req, res, next) {
   const t = req.cookies['admin_session'];
   const data = verifyToken(t);
@@ -98,13 +107,9 @@ function badge(status, cacResult) {
   return '⚪ Em revisão';
 }
 
-// ==========================================================
-// FUNÇÃO DE EXTRAÇÃO DE PDF ATUALIZADA PARA INCLUIR CPF
-// ==========================================================
 async function extractFromPdf(pdfBuffer) {
   const pdfData = await pdfParse(pdfBuffer);
   const text = (pdfData.text || '').toUpperCase().replace(/\s+/g, ' ');
-
   const numMatch = text.match(/N[º°:]\s*(\d{6,})/) || text.match(/CRIMINAIS N° (\d+)/);
   const datePatterns = [
     /FOI EXPEDIDA EM (\d{2}\/\d{2}\/\d{4})/,
@@ -134,27 +139,17 @@ async function extractFromPdf(pdfBuffer) {
         }
     }
   }
-
-  // --- NOVA LÓGICA PARA EXTRAIR O CPF DO PDF ---
   const cpfMatch = text.match(/CPF\s*(?:N[º°:])?\s*(\d{3}\.\d{3}\.\d{3}-\d{2})/);
   const pdf_cpf = cpfMatch ? cpfMatch[1].replace(/\D/g, '') : null;
-  // --- FIM DA NOVA LÓGICA ---
-
   const cert_number = numMatch ? numMatch[1] : null;
   const expires_at = (issued_at && issued_at.isValid()) ? issued_at.add(90, 'day') : null;
-  
   let cac_result = 'desconhecido';
   if (text.includes('NÃO CONSTA') || text.includes('NADA CONSTA')) {
     cac_result = 'nada_consta';
   }
-
-  // Retorna também o CPF encontrado no PDF
   return { cert_number, issued_at, expires_at, cac_result, pdf_cpf };
 }
 
-// ==================================================================
-// FUNÇÕES DE LAYOUT (PERMANECEM IGUAIS)
-// ==================================================================
 const page = (title, bodyHtml) => `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -412,9 +407,6 @@ app.get('/cadastro', (_req, res) => {
   `));
 });
 
-// ==========================================================
-// ROTA DE CADASTRO ATUALIZADA COM VERIFICAÇÃO DE CPF NO PDF
-// ==========================================================
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   try {
     const { nome, cpf, email, password, consent } = req.body;
@@ -448,14 +440,12 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
       return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
     }
 
-    // --- VERIFICAÇÃO DE CPF NO DOCUMENTO (LÓGICA REFINADA) ---
     if (!pdf_cpf) {
       return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O documento enviado não contém um número de CPF. Por favor, emita uma nova Certidão no site do Gov.br, garantindo que o CPF seja incluído.</p>'));
     }
     if (pdf_cpf !== cpfClean) {
       return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF informado no formulário não corresponde ao CPF encontrado no documento PDF. Por favor, envie o seu próprio documento.</p>'));
     }
-    // --- FIM DA VERIFICAÇÃO ---
     
     const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
     let status = 'em_revisao';
@@ -526,12 +516,31 @@ app.post('/login', async (req, res) => {
   await pool.query('UPDATE cadastros SET last_login_at=NOW() WHERE id=$1', [rows[0].id]);
   res.redirect('/meu/painel');
 });
+
 // ===== Painel do voluntário =====
-app.get('/meu/painel', requireVolunteer, async (req, res) => {
+app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
   const r = rows[0];
   const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
   const exp = r.expires_at ? dayjs(r.expires_at).format('DD/MM/YYYY') : '-';
+
+  const updateFormHtml = (r.status === 'apto' || r.status === 'em_revisao')
+    ? `<div class="mt-6 pt-6 border-t">
+        <h3 class="font-semibold mb-2">Atualizar dados</h3>
+        <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
+          <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
+          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
+          <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
+        </form>
+      </div>`
+    : `<div class="mt-6 pt-6 border-t">
+         <h3 class="font-semibold mb-2">Atualização Bloqueada</h3>
+         <div class="text-sm text-amber-800 bg-amber-100 p-4 rounded-lg">
+           <p>Seu cadastro foi marcado como <strong>${badge(r.status, r.cac_result)}</strong> pela administração.</p>
+           <p class="mt-2">Para fazer alterações ou enviar um novo documento, por favor, entre em contato com a liderança do ministério.</p>
+         </div>
+       </div>`;
 
   res.send(page('Meu Painel', `
     <div class="max-w-2xl mx-auto bg-white border rounded-xl p-6">
@@ -547,15 +556,7 @@ app.get('/meu/painel', requireVolunteer, async (req, res) => {
       
       ${r.pdf_path ? `<p><a href="/meu/ver-pdf" target="_blank" class="text-sm link-brand underline">Visualizar CAC enviado</a></p>` : ''}
       
-      <div class="mt-6 pt-6 border-t">
-        <h3 class="font-semibold mb-2">Atualizar dados</h3>
-        <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
-          <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
-          <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
-          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
-          <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
-        </form>
-      </div>
+      ${updateFormHtml}
 
       <p class="mt-6 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
     </div>
@@ -595,17 +596,24 @@ app.get('/logout', (req,res)=>{
   res.redirect('/login');  
 });
 
-// ==========================================================
-// ROTA DE ATUALIZAÇÃO ATUALIZADA COM VERIFICAÇÃO DE CPF NO PDF
-// ==========================================================
 app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (req, res, next) => {
   try {
     const id = req.vol.volunteer_id;
-    if (req.body.consent !== 'on') return res.status(400).send(page('Erro', '<p>Você precisa confirmar o termo de consentimento.</p>'));
 
-    const { rows: currentUser } = await pool.query('SELECT cpf, pdf_path FROM cadastros WHERE id = $1', [id]);
-    const oldPdfPath = currentUser[0].pdf_path;
-    const cpfClean = currentUser[0].cpf;
+    const { rows: currentUserRows } = await pool.query('SELECT cpf, pdf_path, status FROM cadastros WHERE id = $1', [id]);
+    if (currentUserRows.length === 0) {
+      return res.status(404).send(page('Erro', '<p>Usuário não encontrado.</p>'));
+    }
+    const currentUser = currentUserRows[0];
+    const currentStatus = currentUser.status;
+    const oldPdfPath = currentUser.pdf_path;
+    const cpfClean = currentUser.cpf;
+
+    if (currentStatus === 'inapto' || currentStatus === 'atencao') {
+      return res.status(403).send(page('Atualização Bloqueada', '<p class="text-red-600 font-semibold">Sua conta está com um status que não permite atualizações automáticas. Por favor, entre em contato com a administração.</p>'));
+    }
+
+    if (req.body.consent !== 'on') return res.status(400).send(page('Erro', '<p>Você precisa confirmar o termo de consentimento.</p>'));
 
     const updates = [];
     const params = [];
@@ -622,14 +630,12 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
       const pdfBuffer = req.file.buffer;
       const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
       
-      // --- VERIFICAÇÃO DE CPF NO DOCUMENTO (LÓGICA REFINADA) ---
       if (!pdf_cpf) {
         return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O novo documento enviado não contém um CPF. Por favor, emita e envie uma Certidão que inclua seu CPF.</p>'));
       }
       if (pdf_cpf !== cpfClean) {
         return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF no novo documento não corresponde ao seu CPF cadastrado. Por favor, envie o seu próprio documento.</p>'));
       }
-      // --- FIM DA VERIFICAÇÃO ---
 
       const key = `cac/${Date.now()}_${cert_number || 'sem-numero'}.pdf`;
       const { error: uploadError } = await supabase.storage
@@ -646,20 +652,20 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
       updates.push(`pdf_sha256=$${idx++}`); params.push(pdf_sha256);
       updates.push(`cac_result=$${idx++}`); params.push(cac_result);
 
-      let status = 'em_revisao';
+      let newStatus = 'em_revisao';
       if (issued_at && expires_at && issued_at.isValid()) {
         const now = dayjs();
         if (now.isAfter(expires_at)) {
-          status = 'inapto';
+          newStatus = 'inapto';
         } else if (cac_result === 'nada_consta') {
           if (expires_at.diff(now, 'day') <= 15) {
-            status = 'atencao';
+            newStatus = 'atencao';
           } else {
-            status = 'apto';
+            newStatus = 'apto';
           }
         }
       }
-      updates.push(`status=$${idx++}`); params.push(status);
+      updates.push(`status=$${idx++}`); params.push(newStatus);
     }
 
     updates.push(`consent_signed_at=NOW()`);
@@ -780,7 +786,7 @@ app.get('/admin/logout', (req, res) => {
   res.redirect('/admin/login');
 });
 
-app.get('/admin/painel', requireAdmin, async (_req,res)=>{
+app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (_req,res)=>{
   const { rows } = await pool.query('SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path FROM cadastros ORDER BY created_at DESC LIMIT 500');
   const tr = rows.map(r=>{
     const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
