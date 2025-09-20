@@ -536,12 +536,12 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         </form>
       </div>`
     : `<div class="mt-6 pt-6 border-t">
-         <h3 class="font-semibold mb-2">Atualização Bloqueada</h3>
-         <div class="text-sm text-amber-800 bg-amber-100 p-4 rounded-lg">
-           <p>Seu cadastro foi marcado como <strong>${badge(r.status, r.cac_result)}</strong> pela administração.</p>
-           <p class="mt-2">Para fazer alterações ou enviar um novo documento, por favor, entre em contato com a liderança do ministério.</p>
-         </div>
-       </div>`;
+          <h3 class="font-semibold mb-2">Atualização Bloqueada</h3>
+          <div class="text-sm text-amber-800 bg-amber-100 p-4 rounded-lg">
+            <p>Seu cadastro foi marcado como <strong>${badge(r.status, r.cac_result)}</strong> pela administração.</p>
+            <p class="mt-2">Para fazer alterações ou enviar um novo documento, por favor, entre em contato com a liderança do ministério.</p>
+          </div>
+        </div>`;
 
   res.send(page('Meu Painel', `
     <div class="max-w-2xl mx-auto bg-white border rounded-xl p-6">
@@ -766,8 +766,9 @@ app.get('/admin/login', (_req, res) => {
             </span>
           </div>
         </div>
-        <button type="submit" class="btn-brand px-4 py-2 rounded">Entrar</button>
+        <button type="submit" class="btn-brand px-4 py-2 rounded w-full">Entrar</button>
       </form>
+      <p class="text-sm mt-2"><a href="/admin/forgot" class="link-brand underline">Esqueci minha senha</a></p>
     </div>
   `));
 });
@@ -785,6 +786,92 @@ app.post('/admin/login', async (req,res)=>{
   const token = signToken({ role: `admin:${rows[0].role}`, email: email.trim(), admin_id: rows[0].id });
   res.cookie('admin_session', token, { httpOnly: true, sameSite:'lax', secure:true });
   res.redirect('/admin/painel');
+});
+
+// ===== Reset de senha Admin (NOVA FUNCIONALIDADE) =====
+app.get('/admin/forgot', (_req, res) => {
+  res.send(adminPage('Esqueci minha senha', `
+    <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
+      <h2 class="text-xl font-semibold mb-3">Recuperar senha de Administrador</h2>
+      <p class="text-sm mb-4">Digite o e-mail associado à sua conta de admin e enviaremos um link para redefinir sua senha.</p>
+      <form method="post" action="/admin/forgot" class="space-y-3">
+        <div><label class="block text-sm">E-mail</label><input name="email" type="email" class="w-full border rounded px-3 py-2" required/></div>
+        <button type="submit" class="btn-brand px-4 py-2 rounded w-full">Enviar link de recuperação</button>
+      </form>
+    </div>
+  `));
+});
+
+app.post('/admin/forgot', async (req, res, next) => {
+  try {
+    const email = (req.body.email || '').trim().toLowerCase();
+    const { rows } = await pool.query('SELECT id FROM admins WHERE email=$1 LIMIT 1', [email]);
+    
+    // Não funciona para o super admin definido no .env, o que é esperado.
+    if (!rows.length) {
+      return res.send(adminPage('OK', '<p>Se existir uma conta de administrador com este e-mail, enviaremos um link para recuperação de senha.</p>'));
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    await pool.query('UPDATE admins SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
+    const link = `${process.env.APP_BASE_URL || ''}/admin/reset?token=${token}`;
+
+    if (transporter) {
+      await transporter.sendMail({
+        from: process.env.MAIL_FROM || 'no-reply@example.com',
+        to: email,
+        subject: `Redefinição de senha Admin - ${ORG}`,
+        html: `Clique aqui para redefinir sua senha de administrador: <a href="${link}">${link}</a>`
+      });
+    }
+
+    res.send(adminPage('OK', `<p>Se existir uma conta de administrador com o e-mail informado, um link para recuperação de senha foi enviado. Por favor, verifique sua caixa de entrada e spam.</p>`));
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.get('/admin/reset', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT id FROM admins WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [req.query.token]);
+    if (!rows.length) return res.send(adminPage('Reset', '<p>Link inválido ou expirado.</p>'));
+    
+    res.send(adminPage('Definir nova senha de Admin', `
+      <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
+        <h2 class="text-xl font-semibold mb-3">Definir Nova Senha de Admin</h2>
+        <form method="post" action="/admin/reset?token=${req.query.token}" class="space-y-3">
+          <div>
+            <label class="block text-sm">Nova senha</label>
+            <div class="relative password-toggle-container">
+              <input name="password" type="password" required class="w-full border rounded px-3 py-2 pr-10"/>
+              <span class="password-toggle-icon absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-500">
+                <svg class="eye-icon h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                <svg class="eye-slash-icon hidden h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+              </span>
+            </div>
+          </div>
+          <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
+        </form>
+      </div>
+    `));
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.post('/admin/reset', async (req, res, next) => {
+  try {
+    const token = req.query.token;
+    const { rows } = await pool.query('SELECT id FROM admins WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [token]);
+    if (!rows.length) return res.send(adminPage('Reset', '<p>Link inválido ou expirado.</p>'));
+    
+    const hash = await bcrypt.hash(req.body.password || '', 10);
+    await pool.query('UPDATE admins SET password_hash=$1, reset_token=NULL, reset_expires=NULL WHERE id=$2', [hash, rows[0].id]);
+    
+    res.send(adminPage('OK', '<p>Senha de administrador atualizada com sucesso. <a href="/admin/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
+  } catch (e) {
+    next(e);
+  }
 });
 
 app.get('/admin/logout', (req, res) => {
@@ -920,22 +1007,22 @@ app.get('/admin/admins', requireSuper, async (req,res)=>{
   
       if (adminData.role === 'admin:super' && a.email.toLowerCase() !== adminData.email.toLowerCase() && a.email !== process.env.SUPER_ADMIN_EMAIL) {
           deleteForm = `
-              <form action="/admin/delete-admin" method="post" onsubmit="return confirm('Tem certeza que deseja excluir este administrador?');">
-                  <input type="hidden" name="id" value="${a.id}" />
-                  <button type="submit" class="text-red-500 hover:text-red-700 text-xl">🗑️</button>
-              </form>
+                <form action="/admin/delete-admin" method="post" onsubmit="return confirm('Tem certeza que deseja excluir este administrador?');">
+                    <input type="hidden" name="id" value="${a.id}" />
+                    <button type="submit" class="text-red-500 hover:text-red-700 text-xl">🗑️</button>
+                </form>
           `;
           roleEditor = `
-              <td class="py-2 px-3">
-                  <form action="/admin/update-admin-role" method="post" class="flex items-center gap-2">
-                      <input type="hidden" name="id" value="${a.id}" />
-                      <select name="role" class="border rounded text-xs p-1">
-                          <option value="normal" ${a.role === 'normal' ? 'selected' : ''}>Normal</option>
-                          <option value="super" ${a.role === 'super' ? 'selected' : ''}>Super</option>
-                      </select>
-                      <button class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600">Salvar</button>
-                  </form>
-              </td>
+                <td class="py-2 px-3">
+                    <form action="/admin/update-admin-role" method="post" class="flex items-center gap-2">
+                        <input type="hidden" name="id" value="${a.id}" />
+                        <select name="role" class="border rounded text-xs p-1">
+                            <option value="normal" ${a.role === 'normal' ? 'selected' : ''}>Normal</option>
+                            <option value="super" ${a.role === 'super' ? 'selected' : ''}>Super</option>
+                        </select>
+                        <button class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600">Salvar</button>
+                    </form>
+                </td>
           `;
       }
   
