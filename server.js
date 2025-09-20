@@ -255,84 +255,109 @@ ${bodyHtml}
 </body>
 </html>`;
 
-const adminPage = (title, bodyHtml) => `<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${title}</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-  :root{ --brand:${BRAND.primary}; --accent:${BRAND.accent}; }
-  .btn-brand{ background: var(--brand); color:#fff; }
-  .btn-brand:hover{ filter: brightness(0.95); }
-  .link-brand{ color: var(--brand); }
-</style>
-</head>
-<body class="bg-slate-50 text-slate-800">
-<header class="bg-white border-b sticky top-0 z-10">
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
-      <div class="text-lg font-semibold">${ORG}</div>
-    </div>
-    <nav class="text-sm">
-        <button id="menu-btn" class="md:hidden p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
-          </svg>
-        </button>
-        
-        <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
-          <a href="/" class="hover:text-brand">Início</a>
-          <a href="/cadastro" class="hover:text-brand">Cadastro</a>
-          <a href="/login" class="hover:text-brand">Login</a>
-          <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
+// ===== NOVA FUNÇÃO adminPage MODIFICADA =====
+const adminPage = (title, bodyHtml, admin = null) => {
+    // Define os links de navegação com base no status de login do admin
+    const navLinksDesktop = admin && admin.email
+      ? `
+        <div class="flex items-center gap-4">
+          <span class="text-sm text-slate-600">Logado como: <strong>${admin.email}</strong></span>
+          <a href="/admin/logout" class="link-brand underline text-sm">Sair</a>
         </div>
-    </nav>
-  </div>
-  <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
-      <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
-      <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
-      <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
-      <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
-  </div>
-</header>
-<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-${bodyHtml}
-</main>
-<footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
+      `
+      : `
+        <a href="/" class="hover:text-brand">Início</a>
+        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+        <a href="/login" class="hover:text-brand">Login</a>
+        <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
+      `;
 
-<script>
-  const menuBtn = document.getElementById('menu-btn');
-  const mobileMenu = document.getElementById('menu-links-mobile');
-  if(menuBtn && mobileMenu) {
-    menuBtn.addEventListener('click', () => {
-      mobileMenu.classList.toggle('hidden');
-    });
-  }
+    const navLinksMobile = admin && admin.email
+      ? `
+        <div class="text-center py-3 text-sm text-slate-600">Logado como: <strong>${admin.email}</strong></div>
+        <a href="/admin/logout" class="block text-center py-3 text-sm border-t hover:bg-slate-100 link-brand">Sair</a>
+      `
+      : `
+        <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
+        <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+        <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
+        <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
+      `;
 
-  document.querySelectorAll('.password-toggle-container').forEach(container => {
-    const input = container.querySelector('input[type="password"], input[type="text"]');
-    const toggle = container.querySelector('.password-toggle-icon');
-    const eyeIcon = toggle.querySelector('.eye-icon');
-    const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
+    return `<!doctype html>
+    <html lang="pt-BR">
+    <head>
+    <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>${title}</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root{ --brand:${BRAND.primary}; --accent:${BRAND.accent}; }
+      .btn-brand{ background: var(--brand); color:#fff; }
+      .btn-brand:hover{ filter: brightness(0.95); }
+      .link-brand{ color: var(--brand); }
+    </style>
+    </head>
+    <body class="bg-slate-50 text-slate-800">
+    <header class="bg-white border-b sticky top-0 z-10">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
+          <div class="text-lg font-semibold">${ORG}</div>
+        </div>
+        <nav class="text-sm">
+            <button id="menu-btn" class="md:hidden p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-400">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
+              </svg>
+            </button>
+            
+            <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
+              ${navLinksDesktop}
+            </div>
+        </nav>
+      </div>
+      <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
+          ${navLinksMobile}
+      </div>
+    </header>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    ${bodyHtml}
+    </main>
+    <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
 
-    toggle.addEventListener('click', () => {
-      if (input.type === 'password') {
-        input.type = 'text';
-        eyeIcon.classList.add('hidden');
-        eyeSlashIcon.classList.remove('hidden');
-      } else {
-        input.type = 'password';
-        eyeIcon.classList.remove('hidden');
-        eyeSlashIcon.classList.add('hidden');
+    <script>
+      const menuBtn = document.getElementById('menu-btn');
+      const mobileMenu = document.getElementById('menu-links-mobile');
+      if(menuBtn && mobileMenu) {
+        menuBtn.addEventListener('click', () => {
+          mobileMenu.classList.toggle('hidden');
+        });
       }
-    });
-  });
-</script>
-</body>
-</html>`;
+
+      document.querySelectorAll('.password-toggle-container').forEach(container => {
+        const input = container.querySelector('input[type="password"], input[type="text"]');
+        const toggle = container.querySelector('.password-toggle-icon');
+        const eyeIcon = toggle.querySelector('.eye-icon');
+        const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
+
+        toggle.addEventListener('click', () => {
+          if (input.type === 'password') {
+            input.type = 'text';
+            eyeIcon.classList.add('hidden');
+            eyeSlashIcon.classList.remove('hidden');
+          } else {
+            input.type = 'password';
+            eyeIcon.classList.remove('hidden');
+            eyeSlashIcon.classList.add('hidden');
+          }
+        });
+      });
+    </script>
+    </body>
+    </html>`;
+};
+
 
 // ===== Rotas Públicas =====
 app.get('/', (_req, res) => {
@@ -747,7 +772,6 @@ app.post('/reset', async (req,res)=> {
 
 // ===== Admin =====
 app.get('/admin/login', (_req, res) => {
-  // CORREÇÃO: Limpa qualquer sessão ativa ao chegar na tela de login do admin
   res.clearCookie('vol_session');
   res.clearCookie('admin_session');
 
@@ -788,7 +812,7 @@ app.post('/admin/login', async (req,res)=>{
   res.redirect('/admin/painel');
 });
 
-// ===== Reset de senha Admin (NOVA FUNCIONALIDADE) =====
+// ===== Reset de senha Admin =====
 app.get('/admin/forgot', (_req, res) => {
   res.send(adminPage('Esqueci minha senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -807,7 +831,6 @@ app.post('/admin/forgot', async (req, res, next) => {
     const email = (req.body.email || '').trim().toLowerCase();
     const { rows } = await pool.query('SELECT id FROM admins WHERE email=$1 LIMIT 1', [email]);
     
-    // Não funciona para o super admin definido no .env, o que é esperado.
     if (!rows.length) {
       return res.send(adminPage('OK', '<p>Se existir uma conta de administrador com este e-mail, enviaremos um link para recuperação de senha.</p>'));
     }
@@ -879,7 +902,8 @@ app.get('/admin/logout', (req, res) => {
   res.redirect('/admin/login');
 });
 
-app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (_req,res)=>{
+app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
+  const adminData = verifyToken(req.cookies['admin_session']);
   const { rows } = await pool.query('SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path FROM cadastros ORDER BY created_at DESC LIMIT 500');
   const tr = rows.map(r=>{
     const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
@@ -924,10 +948,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (_req,res)=>{
     </tr>`;
   }).join('');
   res.send(adminPage('Painel Admin', `
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-2xl font-semibold">Cadastros</h2>
-      <a href="/admin/logout" class="link-brand underline text-sm">Sair</a>
-    </div>
+    <h2 class="text-2xl font-semibold mb-4">Cadastros</h2>
     <div class="overflow-x-auto bg-white border rounded-xl mb-6">
       <table class="min-w-full text-sm">
         <thead class="bg-slate-100"><tr>
@@ -948,7 +969,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (_req,res)=>{
       </table>
     </div>
     <a href="/admin/admins" class="btn-brand px-4 py-2 rounded">Gerenciar Admins</a>
-  `));
+  `, adminData));
 });
 
 app.post('/admin/update-status', requireAdmin, async (req, res) => {
@@ -998,7 +1019,7 @@ app.post('/admin/delete-servo', requireAdmin, async (req, res) => {
     }
 });
 
-app.get('/admin/admins', requireSuper, async (req,res)=>{
+app.get('/admin/admins', requireSuper, setNoCacheHeaders, async (req,res)=>{
     const adminData = verifyToken(req.cookies['admin_session']);
     const { rows } = await pool.query('SELECT id,email,role,created_at FROM admins ORDER BY created_at DESC');
     const tr = rows.map(a=>{
@@ -1057,7 +1078,7 @@ app.get('/admin/admins', requireSuper, async (req,res)=>{
           </table>
         </div>
       </div>
-    `));
+    `, adminData));
   });
   
   app.post('/admin/update-admin-role', requireSuper, async (req, res) => {
@@ -1114,6 +1135,7 @@ app.get('/admin/admins', requireSuper, async (req,res)=>{
   });
   
   app.post('/admin/invite', requireSuper, async (req,res)=>{
+    const adminData = verifyToken(req.cookies['admin_session']);
     const email = (req.body.email||'').trim();
     const role = 'normal';
     const token = crypto.randomBytes(24).toString('hex');
@@ -1124,7 +1146,7 @@ app.get('/admin/admins', requireSuper, async (req,res)=>{
     if (transporter) {
       await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email, subject: 'Convite para Admin - Atitude Kids', html: `Finalize seu acesso: <a href="${link}">${link}</a>` });
     }
-    res.send(adminPage('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`));
+    res.send(adminPage('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`, adminData));
   });
   
   app.get('/admin/first-access', async (req,res)=>{
@@ -1157,7 +1179,7 @@ app.get('/admin/admins', requireSuper, async (req,res)=>{
     res.send(adminPage('OK', '<p>Senha definida. <a href="/admin/login" class="link-brand underline">Entrar</a></p>'));
   });
   
-  app.get('/admin/ver-pdf/:id', requireAdmin, async (req, res) => {
+  app.get('/admin/ver-pdf/:id', requireAdmin, setNoCacheHeaders, async (req, res) => {
     try {
       const { id } = req.params;
       const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
