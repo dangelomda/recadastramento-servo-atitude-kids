@@ -1406,4 +1406,25 @@ app.use((err, req, res, next) => {
 // =====================
 // Start server
 // =====================
-app.listen(process.env.PORT || 3000, () => console.log(`On-line na porta ${process.env.PORT || 3000}`));
+
+
+// Adicione este bloco de código no final do seu server.js
+const startServer = async () => {
+  try {
+    console.log('Testando conexão com o banco de dados...');
+    const client = await pool.connect();
+    console.log('✅ Conexão com o banco de dados bem-sucedida.');
+    client.release();
+
+    app.listen(process.env.PORT || 3000, () => {
+      console.log(`🚀 Servidor on-line na porta ${process.env.PORT || 3000}`);
+    });
+
+  } catch (error) {
+    console.error('❌ Não foi possível conectar ao banco de dados ao iniciar.', error);
+    // Em um ambiente de produção, é melhor sair se o DB não estiver disponível.
+    process.exit(1); 
+  }
+};
+
+startServer();
