@@ -539,6 +539,20 @@ app.get('/cadastro', (_req, res) => {
         <div class="space-y-4">
           <div><label class="block text-sm mb-1">Nome completo</label><input name="nome" required class="w-full border rounded px-3 py-2"/></div>
           <div><label class="block text-sm mb-1">CPF</label><input name="cpf" required placeholder="000.000.000-00" class="w-full border rounded px-3 py-2"/></div>
+          
+          <div>
+            <label class="block text-sm mb-1">Rede</label>
+            <select name="rede" required class="w-full border rounded px-3 py-2">
+              <option value="">Selecione...</option>
+              <option value="Amarela">Amarela</option>
+              <option value="Vermelha">Vermelha</option>
+              <option value="Verde">Verde</option>
+              <option value="Branca">Branca</option>
+              <option value="Laranja">Laranja</option>
+              <option value="Azul">Azul</option>
+            </select>
+          </div>
+
           <div><label class="block text-sm mb-1">E-mail</label><input name="email" type="email" required class="w-full border rounded px-3 py-2"/></div>
           <div>
             <label class="block text-sm mb-1">Senha</label>
@@ -561,7 +575,7 @@ app.get('/cadastro', (_req, res) => {
 
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   try {
-    const { nome, cpf, email, password, consent } = req.body;
+    const { nome, cpf, email, password, consent, rede } = req.body;
     const cpfClean = cpf.replace(/\D/g, '');
     const emailClean = email.trim().toLowerCase();
 
@@ -574,7 +588,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
       return res.status(409).send(page('Erro', '<p class="text-red-600 font-semibold">CPF ou E-mail já cadastrado. Se você já tem uma conta, por favor, <a href="/login" class="link-brand underline">faça o login</a>.</p>'));
     }
 
-    if (!nome || !cpf || !email || !password || consent !== 'on' || !req.file)
+    if (!nome || !cpf || !email || !password || !rede || consent !== 'on' || !req.file)
       return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
     
     if (!cpfValidator.isValid(cpfClean))
@@ -618,12 +632,13 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
         .from(process.env.SUPABASE_BUCKET)
         .upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
     if (uploadError) throw uploadError;
+    
     const insert = `
       INSERT INTO cadastros
-      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW(),NOW()) RETURNING id
+      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12) RETURNING id
     `;
-    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result];
+    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede];
     const { rows } = await pool.query(insert, vals);
     const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
     res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
@@ -707,6 +722,7 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
       <ul class="text-sm space-y-1 mb-4">
         <li><strong>E-mail:</strong> ${r.email}</li>
         <li><strong>CPF:</strong> ${r.cpf}</li>
+        <li><strong>Rede:</strong> ${r.rede || '-'}</li>
         <li><strong>Nº certidão:</strong> ${r.cert_number || '-'}</li>
         <li><strong>Emitida em:</strong> ${issued}</li>
         <li><strong>Válida até:</strong> ${exp}</li>
@@ -1039,7 +1055,31 @@ app.get('/admin/logout', (req, res) => {
 
 app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
   const adminData = verifyToken(req.cookies['admin_session']);
-  const { rows } = await pool.query('SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path FROM cadastros ORDER BY created_at DESC LIMIT 500');
+  
+  const { nome, email, status, rede } = req.query;
+  let query = 'SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path,rede FROM cadastros WHERE 1=1';
+  const params = [];
+
+  if (nome) {
+    params.push(`%${nome}%`);
+    query += ` AND nome ILIKE $${params.length}`;
+  }
+  if (email) {
+    params.push(`%${email}%`);
+    query += ` AND email ILIKE $${params.length}`;
+  }
+  if (status) {
+    params.push(status);
+    query += ` AND status = $${params.length}`;
+  }
+  if (rede) {
+    params.push(rede);
+    query += ` AND rede = $${params.length}`;
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT 500';
+  const { rows } = await pool.query(query, params);
+  
   const tr = rows.map(r=>{
     const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
     const exp = r.expires_at ? dayjs(r.expires_at).format('DD/MM/YYYY') : '-';
@@ -1072,6 +1112,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
       <td class="py-2 px-3">${r.id}</td>
       <td class="py-2 px-3">${r.nome}</td>
       <td class="py-2 px-3">${r.cpf}</td>
+      <td class="py-2 px-3">${r.rede || '-'}</td>
       <td class="py-2 px-3">${r.email}</td>
       <td class="py-2 px-3">${r.cert_number||'-'}</td>
       <td class="py-2 px-3">${issued}</td>
@@ -1082,8 +1123,37 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
       <td class="py-2 px-3">${acaoVerPdf}</td>
     </tr>`;
   }).join('');
+
+  const filtersHtml = `
+    <form method="get" class="mb-6 grid grid-cols-2 md:grid-cols-5 gap-3 bg-white p-4 rounded-lg border items-end">
+      <div class="col-span-2 md:col-span-1"><label class="text-xs font-semibold text-slate-600">Nome</label><input type="text" name="nome" value="${nome || ''}" class="border rounded px-3 py-2 w-full mt-1"></div>
+      <div class="col-span-2 md:col-span-1"><label class="text-xs font-semibold text-slate-600">E-mail</label><input type="text" name="email" value="${email || ''}" class="border rounded px-3 py-2 w-full mt-1"></div>
+      <div class="col-span-1"><label class="text-xs font-semibold text-slate-600">Status</label><select name="status" class="border rounded px-3 py-2 w-full mt-1">
+        <option value="">Todos</option>
+        <option value="apto" ${status === 'apto' ? 'selected' : ''}>Apto</option>
+        <option value="inapto" ${status === 'inapto' ? 'selected' : ''}>Inapto</option>
+        <option value="atencao" ${status === 'atencao' ? 'selected' : ''}>Atenção</option>
+        <option value="em_revisao" ${status === 'em_revisao' ? 'selected' : ''}>Em revisão</option>
+      </select></div>
+      <div class="col-span-1"><label class="text-xs font-semibold text-slate-600">Rede</label><select name="rede" class="border rounded px-3 py-2 w-full mt-1">
+        <option value="">Todas</option>
+        <option value="Amarela" ${rede === 'Amarela' ? 'selected' : ''}>Amarela</option>
+        <option value="Vermelha" ${rede === 'Vermelha' ? 'selected' : ''}>Vermelha</option>
+        <option value="Verde" ${rede === 'Verde' ? 'selected' : ''}>Verde</option>
+        <option value="Branca" ${rede === 'Branca' ? 'selected' : ''}>Branca</option>
+        <option value="Laranja" ${rede === 'Laranja' ? 'selected' : ''}>Laranja</option>
+        <option value="Azul" ${rede === 'Azul' ? 'selected' : ''}>Azul</option>
+      </select></div>
+      <div class="col-span-2 md:col-span-1 flex justify-start gap-2">
+        <button type="submit" class="btn-brand px-4 py-2 rounded">Filtrar</button>
+        <a href="/admin/painel" class="px-4 py-2 border rounded text-slate-600 hover:bg-slate-100">Limpar</a>
+      </div>
+    </form>
+  `;
+  
   res.send(adminPage('Painel Admin', `
     <h2 class="text-2xl font-semibold mb-4">Cadastros</h2>
+    ${filtersHtml}
     <div class="overflow-x-auto bg-white border rounded-xl mb-6">
       <table class="min-w-full text-sm">
         <thead class="bg-slate-100"><tr>
@@ -1091,6 +1161,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
             <th class="px-3 py-2 text-left">ID</th>
             <th class="px-3 py-2 text-left">Nome Completo</th>
             <th class="px-3 py-2 text-left">CPF</th>
+            <th class="px-3 py-2 text-left">Rede</th>
             <th class="px-3 py-2 text-left">E-mail</th>
             <th class="px-3 py-2 text-left">Certidão</th>
             <th class="px-3 py-2 text-left">Emissão</th>
@@ -1100,7 +1171,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
             <th class="px-3 py-2 text-left">Validar</th>
             <th class="px-3 py-2 text-left">PDF</th>
         </tr></thead>
-        <tbody>${tr || `<tr><td colspan="12" class="py-6 text-center text-slate-500">Sem registros</td></tr>`}</tbody>
+        <tbody>${tr || `<tr><td colspan="13" class="py-6 text-center text-slate-500">Sem registros</td></tr>`}</tbody>
       </table>
     </div>
     <a href="/admin/admins" class="btn-brand px-4 py-2 rounded">Gerenciar Admins</a>
