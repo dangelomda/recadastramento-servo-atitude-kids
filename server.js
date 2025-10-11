@@ -702,6 +702,19 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         <h3 class="font-semibold mb-2">Atualizar dados</h3>
         <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
           <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
+          
+          <div>
+            <label class="block text-sm">Sua Rede (opcional)</label>
+            <select name="rede" class="w-full border rounded px-3 py-2">
+              <option value="Amarela" ${r.rede === 'Amarela' ? 'selected' : ''}>Amarela</option>
+              <option value="Vermelha" ${r.rede === 'Vermelha' ? 'selected' : ''}>Vermelha</option>
+              <option value="Verde" ${r.rede === 'Verde' ? 'selected' : ''}>Verde</option>
+              <option value="Branca" ${r.rede === 'Branca' ? 'selected' : ''}>Branca</option>
+              <option value="Laranja" ${r.rede === 'Laranja' ? 'selected' : ''}>Laranja</option>
+              <option value="Azul" ${r.rede === 'Azul' ? 'selected' : ''}>Azul</option>
+            </select>
+          </div>
+
           <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
           <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
           <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
@@ -787,6 +800,11 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     if (req.body.email) { 
       updates.push(`email=$${idx++}`); 
       params.push(req.body.email.trim().toLowerCase()); 
+    }
+
+    if (req.body.rede) {
+      updates.push(`rede = $${idx++}`);
+      params.push(req.body.rede);
     }
 
     if (req.file) {
@@ -1477,9 +1495,6 @@ app.use((err, req, res, next) => {
 // =====================
 // Start server
 // =====================
-
-
-// Adicione este bloco de código no final do seu server.js
 const startServer = async () => {
   try {
     console.log('Testando conexão com o banco de dados...');
