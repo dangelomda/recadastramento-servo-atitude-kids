@@ -68,8 +68,29 @@ app.set('trust proxy', 1);
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
 
 // =====================
-// Helpers - Token & Sessão
+// Helpers - Formatação, Token & Sessão
 // =====================
+
+function formatCPF(cpf) {
+  const cleaned = (cpf || '').toString().replace(/\D/g, '');
+  if (cleaned.length !== 11) {
+    return cpf || '-';
+  }
+  return cleaned.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+}
+
+function formatPhone(phone) {
+  const cleaned = (phone || '').toString().replace(/\D/g, '');
+  if (cleaned.length === 11) {
+    return cleaned.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+  }
+  if (cleaned.length === 10) {
+    return cleaned.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
+  }
+  return phone || '-';
+}
+
+
 function nowMs() { return Date.now(); }
 
 function signToken(payload, secretEnv = 'SESSION_SECRET') {
@@ -297,7 +318,7 @@ ${baseHead(title)}
 </head>
 <body class="bg-slate-50 text-slate-800">
 <header class="bg-white border-b sticky top-0 z-10">
-  <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+  <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
       <div class="text-lg font-semibold">${ORG}</div>
@@ -423,7 +444,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
     </head>
     <body class="bg-slate-50 text-slate-800">
     <header class="bg-white border-b sticky top-0 z-10">
-      <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <img src="${BRAND.logo}" alt="logo" class="h-8 w-auto" onerror="this.src='/public/logo.svg'">
           <div class="text-lg font-semibold">${ORG}</div>
@@ -444,7 +465,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
           ${navLinksMobile}
       </div>
     </header>
-    <main class="max-w-7xl mx-auto px-4 py-8">
+    <main class="w-full px-4 sm:px-6 lg:px-8 py-8">
     ${bodyHtml}
     </main>
     <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
@@ -580,8 +601,9 @@ app.get('/cadastro', (_req, res) => {
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   try {
     const { nome, cpf, email, password, consent, rede, telefone, nome_coordenador } = req.body;
-    const cpfClean = cpf.replace(/\D/g, '');
-    const emailClean = email.trim().toLowerCase();
+    const cpfClean = (cpf || '').replace(/\D/g, '');
+    const emailClean = (email || '').trim().toLowerCase();
+    const telefoneClean = (telefone || '').replace(/\D/g, '');
 
     const { rows: existingUsers } = await pool.query(
       'SELECT id FROM cadastros WHERE cpf = $1 OR email = $2',
@@ -642,7 +664,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
       (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede, telefone, nome_coordenador)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12, $13, $14) RETURNING id
     `;
-    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefone, nome_coordenador];
+    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefoneClean, nome_coordenador.trim()];
     const { rows } = await pool.query(insert, vals);
     const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
     res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
@@ -741,8 +763,8 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
       <p class="text-sm mb-4">Status: ${badge(r.status, r.cac_result)}</p>
       <ul class="text-sm space-y-1 mb-4">
         <li><strong>E-mail:</strong> ${r.email}</li>
-        <li><strong>Telefone:</strong> ${r.telefone || '-'}</li>
-        <li><strong>CPF:</strong> ${r.cpf}</li>
+        <li><strong>Telefone:</strong> ${formatPhone(r.telefone)}</li>
+        <li><strong>CPF:</strong> ${formatCPF(r.cpf)}</li>
         <li><strong>Rede:</strong> ${r.rede || '-'}</li>
         <li><strong>Coordenador:</strong> ${r.nome_coordenador || '-'}</li>
         <li><strong>Nº certidão:</strong> ${r.cert_number || '-'}</li>
@@ -817,13 +839,14 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     }
     
     if (req.body.telefone) {
+      const telefoneClean = (req.body.telefone || '').replace(/\D/g, '');
       updates.push(`telefone = $${idx++}`);
-      params.push(req.body.telefone);
+      params.push(telefoneClean);
     }
 
     if (req.body.nome_coordenador) {
       updates.push(`nome_coordenador = $${idx++}`);
-      params.push(req.body.nome_coordenador);
+      params.push(req.body.nome_coordenador.trim());
     }
 
     if (req.file) {
@@ -1148,8 +1171,8 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
       <td class="py-2 px-3">${deleteForm}</td>
       <td class="py-2 px-3">${r.id}</td>
       <td class="py-2 px-3">${r.nome}</td>
-      <td class="py-2 px-3">${r.cpf}</td>
-      <td class="py-2 px-3">${r.telefone || '-'}</td>
+      <td class="py-2 px-3">${formatCPF(r.cpf)}</td>
+      <td class="py-2 px-3">${formatPhone(r.telefone)}</td>
       <td class="py-2 px-3">${r.rede || '-'}</td>
       <td class="py-2 px-3">${r.nome_coordenador || '-'}</td>
       <td class="py-2 px-3">${r.email}</td>
