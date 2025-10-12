@@ -554,6 +554,10 @@ app.get('/cadastro', (_req, res) => {
           </div>
 
           <div><label class="block text-sm mb-1">E-mail</label><input name="email" type="email" required class="w-full border rounded px-3 py-2"/></div>
+          
+          <div><label class="block text-sm mb-1">Telefone (WhatsApp)</label><input name="telefone" type="tel" placeholder="(21) 99999-9999" required class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm mb-1">Nome do seu Coordenador</label><input name="nome_coordenador" required class="w-full border rounded px-3 py-2"/></div>
+
           <div>
             <label class="block text-sm mb-1">Senha</label>
             <div class="relative password-toggle-container">
@@ -575,7 +579,7 @@ app.get('/cadastro', (_req, res) => {
 
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
   try {
-    const { nome, cpf, email, password, consent, rede } = req.body;
+    const { nome, cpf, email, password, consent, rede, telefone, nome_coordenador } = req.body;
     const cpfClean = cpf.replace(/\D/g, '');
     const emailClean = email.trim().toLowerCase();
 
@@ -588,7 +592,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
       return res.status(409).send(page('Erro', '<p class="text-red-600 font-semibold">CPF ou E-mail já cadastrado. Se você já tem uma conta, por favor, <a href="/login" class="link-brand underline">faça o login</a>.</p>'));
     }
 
-    if (!nome || !cpf || !email || !password || !rede || consent !== 'on' || !req.file)
+    if (!nome || !cpf || !email || !password || !rede || !telefone || !nome_coordenador || consent !== 'on' || !req.file)
       return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
     
     if (!cpfValidator.isValid(cpfClean))
@@ -635,10 +639,10 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
     
     const insert = `
       INSERT INTO cadastros
-      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12) RETURNING id
+      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede, telefone, nome_coordenador)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12, $13, $14) RETURNING id
     `;
-    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede];
+    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefone, nome_coordenador];
     const { rows } = await pool.query(insert, vals);
     const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
     res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
@@ -701,7 +705,10 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     ? `<div class="mt-6 pt-6 border-t">
         <h3 class="font-semibold mb-2">Atualizar dados</h3>
         <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
-          <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2"/></div>
+          <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2" value="${r.email || ''}"/></div>
+          
+          <div><label class="block text-sm">Telefone (opcional)</label><input name="telefone" type="tel" class="w-full border rounded px-3 py-2" value="${r.telefone || ''}"/></div>
+          <div><label class="block text-sm">Nome do Coordenador (opcional)</label><input name="nome_coordenador" type="text" class="w-full border rounded px-3 py-2" value="${r.nome_coordenador || ''}"/></div>
           
           <div>
             <label class="block text-sm">Sua Rede (opcional)</label>
@@ -734,8 +741,10 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
       <p class="text-sm mb-4">Status: ${badge(r.status, r.cac_result)}</p>
       <ul class="text-sm space-y-1 mb-4">
         <li><strong>E-mail:</strong> ${r.email}</li>
+        <li><strong>Telefone:</strong> ${r.telefone || '-'}</li>
         <li><strong>CPF:</strong> ${r.cpf}</li>
         <li><strong>Rede:</strong> ${r.rede || '-'}</li>
+        <li><strong>Coordenador:</strong> ${r.nome_coordenador || '-'}</li>
         <li><strong>Nº certidão:</strong> ${r.cert_number || '-'}</li>
         <li><strong>Emitida em:</strong> ${issued}</li>
         <li><strong>Válida até:</strong> ${exp}</li>
@@ -805,6 +814,16 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     if (req.body.rede) {
       updates.push(`rede = $${idx++}`);
       params.push(req.body.rede);
+    }
+    
+    if (req.body.telefone) {
+      updates.push(`telefone = $${idx++}`);
+      params.push(req.body.telefone);
+    }
+
+    if (req.body.nome_coordenador) {
+      updates.push(`nome_coordenador = $${idx++}`);
+      params.push(req.body.nome_coordenador);
     }
 
     if (req.file) {
@@ -1075,7 +1094,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
   const adminData = verifyToken(req.cookies['admin_session']);
   
   const { nome, email, status, rede } = req.query;
-  let query = 'SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path,rede FROM cadastros WHERE 1=1';
+  let query = 'SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path,rede,telefone,nome_coordenador FROM cadastros WHERE 1=1';
   const params = [];
 
   if (nome) {
@@ -1130,7 +1149,9 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
       <td class="py-2 px-3">${r.id}</td>
       <td class="py-2 px-3">${r.nome}</td>
       <td class="py-2 px-3">${r.cpf}</td>
+      <td class="py-2 px-3">${r.telefone || '-'}</td>
       <td class="py-2 px-3">${r.rede || '-'}</td>
+      <td class="py-2 px-3">${r.nome_coordenador || '-'}</td>
       <td class="py-2 px-3">${r.email}</td>
       <td class="py-2 px-3">${r.cert_number||'-'}</td>
       <td class="py-2 px-3">${issued}</td>
@@ -1179,7 +1200,9 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
             <th class="px-3 py-2 text-left">ID</th>
             <th class="px-3 py-2 text-left">Nome Completo</th>
             <th class="px-3 py-2 text-left">CPF</th>
+            <th class="px-3 py-2 text-left">Telefone</th>
             <th class="px-3 py-2 text-left">Rede</th>
+            <th class="px-3 py-2 text-left">Coordenador</th>
             <th class="px-3 py-2 text-left">E-mail</th>
             <th class="px-3 py-2 text-left">Certidão</th>
             <th class="px-3 py-2 text-left">Emissão</th>
@@ -1189,7 +1212,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
             <th class="px-3 py-2 text-left">Validar</th>
             <th class="px-3 py-2 text-left">PDF</th>
         </tr></thead>
-        <tbody>${tr || `<tr><td colspan="13" class="py-6 text-center text-slate-500">Sem registros</td></tr>`}</tbody>
+        <tbody>${tr || `<tr><td colspan="15" class="py-6 text-center text-slate-500">Sem registros</td></tr>`}</tbody>
       </table>
     </div>
     <a href="/admin/admins" class="btn-brand px-4 py-2 rounded">Gerenciar Admins</a>
