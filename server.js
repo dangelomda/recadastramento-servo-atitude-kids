@@ -241,7 +241,7 @@ async function extractFromPdf(pdfBuffer) {
       const parsedDate = dayjs(match[1], 'DD/MM/YYYY');
       if (parsedDate.isValid()) {
         issued_at = parsedDate;
-        break;  
+        break; 
       }
     }
   }
@@ -951,7 +951,12 @@ app.post('/forgot', async (req,res)=> {
 
   const token = crypto.randomBytes(24).toString('hex');
   await pool.query('UPDATE cadastros SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
-  const link = `${process.env.APP_BASE_URL || ''}/reset?token=${token}`;
+
+  // ===== INÍCIO DA CORREÇÃO =====
+  // Garante que a URL base não tenha uma barra no final antes de montar o link
+  const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+  const link = `${baseUrl}/reset?token=${token}`;
+  // ===== FIM DA CORREÇÃO =====
 
   if (transporter) {
     try {
@@ -1065,7 +1070,11 @@ app.post('/admin/forgot', async (req, res, next) => {
 
     const token = crypto.randomBytes(24).toString('hex');
     await pool.query('UPDATE admins SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
-    const link = `${process.env.APP_BASE_URL || ''}/admin/reset?token=${token}`;
+    
+    // ===== INÍCIO DA CORREÇÃO =====
+    const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+    const link = `${baseUrl}/admin/reset?token=${token}`;
+    // ===== FIM DA CORREÇÃO =====
 
     if (transporter) {
       await transporter.sendMail({
@@ -1429,9 +1438,17 @@ app.get('/admin/admins', requireSuper, setNoCacheHeaders, async (req,res)=>{
     
     await pool.query('INSERT INTO admins(email, invite_token, invite_expires, role) VALUES($1,$2, NOW()+INTERVAL \'2 days\', $3) ON CONFLICT (email) DO UPDATE SET invite_token=$2, invite_expires=NOW()+INTERVAL \'2 days\'', [email, token, role]);
     
-    const link = `${process.env.APP_BASE_URL || ''}/admin/first-access?token=${token}`;
+    // ===== INÍCIO DA CORREÇÃO =====
+    const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+    const link = `${baseUrl}/admin/first-access?token=${token}`;
+    // ===== FIM DA CORREÇÃO =====
+
     if (transporter) {
-      await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email, subject: 'Convite para Admin - Atitude Kids', html: `Finalize seu acesso: <a href="${link}">${link}</a>` });
+      try {
+        await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email, subject: 'Convite para Admin - Atitude Kids', html: `Finalize seu acesso: <a href="${link}">${link}</a>` });
+      } catch (mailError) {
+        console.error(`Falha ao enviar e-mail de convite para ${email}:`, mailError);
+      }
     }
     res.send(adminPage('Convite enviado', `<p>Convite enviado (ou atualizado) para ${email}. Link: <span class="text-xs">${link}</span></p>`, adminData));
   });
