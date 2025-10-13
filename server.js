@@ -1618,9 +1618,9 @@ app.use((err, req, res, next) => {
   res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado no servidor. Por favor, tente novamente.</p>'));
 });
 
-// =====================
+// ======================
 // Start server
-// =====================
+// ======================
 const startServer = async () => {
   try {
     console.log('Testando conexão com o banco de dados...');
