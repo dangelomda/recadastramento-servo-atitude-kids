@@ -951,12 +951,9 @@ app.post('/forgot', async (req,res)=> {
 
   const token = crypto.randomBytes(24).toString('hex');
   await pool.query('UPDATE cadastros SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
-
-  // ===== INÍCIO DA CORREÇÃO =====
-  // Garante que a URL base não tenha uma barra no final antes de montar o link
+  
   const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
   const link = `${baseUrl}/reset?token=${token}`;
-  // ===== FIM DA CORREÇÃO =====
 
   if (transporter) {
     try {
@@ -1071,10 +1068,8 @@ app.post('/admin/forgot', async (req, res, next) => {
     const token = crypto.randomBytes(24).toString('hex');
     await pool.query('UPDATE admins SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
     
-    // ===== INÍCIO DA CORREÇÃO =====
     const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
     const link = `${baseUrl}/admin/reset?token=${token}`;
-    // ===== FIM DA CORREÇÃO =====
 
     if (transporter) {
       await transporter.sendMail({
@@ -1438,10 +1433,8 @@ app.get('/admin/admins', requireSuper, setNoCacheHeaders, async (req,res)=>{
     
     await pool.query('INSERT INTO admins(email, invite_token, invite_expires, role) VALUES($1,$2, NOW()+INTERVAL \'2 days\', $3) ON CONFLICT (email) DO UPDATE SET invite_token=$2, invite_expires=NOW()+INTERVAL \'2 days\'', [email, token, role]);
     
-    // ===== INÍCIO DA CORREÇÃO =====
     const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
     const link = `${baseUrl}/admin/first-access?token=${token}`;
-    // ===== FIM DA CORREÇÃO =====
 
     if (transporter) {
       try {
@@ -1552,19 +1545,23 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
     const reminderDays = [15, 7, 1]; // Envia lembretes 15, 7 e 1 dia antes
 
     for (const day of reminderDays) {
+      // ===== INÍCIO DA ALTERAÇÃO (SUA SUGESTÃO) =====
       const { rows: usersToRemind } = await pool.query(
-        `SELECT id, nome, email, updated_at FROM cadastros 
-         WHERE status = 'apto' AND (updated_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date`
+        `SELECT id, nome, email, issued_at FROM cadastros 
+         WHERE status = 'apto' AND (issued_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date`
       );
+      // ===== FIM DA ALTERAÇÃO =====
 
       for (const user of usersToRemind) {
         const subject = 'Lembrete de Atualização do seu Cadastro no Atitude Kids';
-        const dueDate = dayjs(user.updated_at).add(6, 'months').format('DD/MM/YYYY');
+        // ===== INÍCIO DA ALTERAÇÃO (SUA SUGESTÃO) =====
+        const dueDate = dayjs(user.issued_at).add(6, 'months').format('DD/MM/YYYY');
+        // ===== FIM DA ALTERAÇÃO =====
         const htmlBody = `
           <p>Olá, ${user.nome}!</p>
           <p>Esperamos que esta mensagem o encontre bem.</p>
           <p>Para continuarmos em conformidade com as boas práticas de segurança e com a legislação vigente, nosso ministério realiza a renovação da Certidão de Antecedentes Criminais (CAC) de todos os servos a cada 6 meses.</p>
-          <p>Seu último registro está completando 6 meses em <strong>${dueDate}</strong>. Para nos ajudar a manter seu cadastro atualizado, por favor, acesse seu painel em nosso site e envie uma certidão recém-emitida.</p>
+          <p>A data de emissão do seu último documento completará 6 meses em <strong>${dueDate}</strong>. Para nos ajudar a manter seu cadastro atualizado, por favor, acesse seu painel em nosso site e envie uma certidão recém-emitida.</p>
           <p><a href="${process.env.APP_BASE_URL || ''}/login">Acessar meu painel</a></p>
           <p>Agradecemos imensamente seu tempo, seu serviço e seu cuidado contínuo com a segurança de nossas crianças.</p>
           <p>Um abraço,<br>Liderança Atitude Kids</p>
@@ -1576,9 +1573,11 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
     }
 
     // Rotina para marcar usuários como "Atenção" se o prazo de 6 meses passou
+    // ===== INÍCIO DA ALTERAÇÃO (SUA SUGESTÃO) =====
     const { rows: usersToFlag } = await pool.query(
-      `SELECT id FROM cadastros WHERE status = 'apto' AND (updated_at + INTERVAL '6 months')::date <= NOW()::date`
+      `SELECT id FROM cadastros WHERE status = 'apto' AND (issued_at + INTERVAL '6 months')::date <= NOW()::date`
     );
+    // ===== FIM DA ALTERAÇÃO =====
 
     if (usersToFlag.length > 0) {
       const idsToFlag = usersToFlag.map(u => u.id);
