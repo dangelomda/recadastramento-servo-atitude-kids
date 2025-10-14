@@ -35,12 +35,29 @@ const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 // App base
 // =====================
 const app = express();
-app.use('/public', express.static(path.join(__dirname, 'public')));
+
+
+// ##################################################################################
+// ######################### INÍCIO DA CORREÇÃO DE CACHE ############################
+// ##################################################################################
+
+// Arquivos estáticos: servidos sem cache para evitar problemas de atualização
+app.use('/public', express.static(path.join(__dirname, 'public'), {
+  etag: false, lastModified: false, maxAge: 0
+}));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
 
+// Service worker: servido sempre sem cache e com o tipo MIME (Content-Type) correto
 app.get('/service-worker.js', (req, res) => {
-    res.sendFile(path.resolve(__dirname, 'public', 'service-worker.js'));
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private, max-age=0');
+  res.sendFile(path.resolve(__dirname, 'public', 'service-worker.js'));
 });
+
+// ################################################################################
+// ######################### FIM DA CORREÇÃO DE CACHE #############################
+// ################################################################################
+
 
 // Infra
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -799,11 +816,6 @@ app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
     }
 });
 
-
-// ##########################################################################
-// ######################### INÍCIO DA CORREÇÃO #############################
-// ##########################################################################
-
 app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
     const { rows: userRows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
     if (userRows.length === 0) {
@@ -865,75 +877,72 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
           const base64 = (base64String + padding).replace(/\\-/g, '+').replace(/_/g, '/');
           const rawData = window.atob(base64);
           const outputArray = new Uint8Array(rawData.length);
-          for (let i = 0; i < rawData.length; ++i) { outputArray[i] = rawData.charCodeAt(i); }
+          for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+          }
           return outputArray;
+        }
+
+        async function initializeUI() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                statusEl.textContent = 'Push não é suportado neste navegador.';
+                subscribeButton.disabled = true;
+                return;
+            }
+
+            try {
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+
+                if (subscription) {
+                    console.log('Este navegador já está inscrito.');
+                    subscribeButton.textContent = 'Notificações Ativadas';
+                    subscribeButton.disabled = true;
+                    statusEl.textContent = 'Lembretes ativados para este dispositivo.';
+                } else {
+                    console.log('Este navegador não está inscrito. Habilitando botão.');
+                    subscribeButton.disabled = false;
+                    subscribeButton.addEventListener('click', () => {
+                        subscribeButton.disabled = true;
+                        registerAndSubscribe();
+                    });
+                }
+            } catch (error) {
+                console.error('Erro ao inicializar UI de push:', error);
+                statusEl.textContent = 'Erro ao verificar status das notificações.';
+            }
         }
 
         async function registerAndSubscribe() {
           try {
-            // 1. Registra o Service Worker
             const registration = await navigator.serviceWorker.register('/service-worker.js');
             
-            // 2. Tenta fazer a inscrição para Push Notifications
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
             });
 
-            // 3. Envia a inscrição para o seu backend
             await fetch('/meu/save-subscription', {
               method: 'POST',
               body: JSON.stringify(subscription),
               headers: { 'Content-Type': 'application/json' },
             });
             
-            // 4. Atualiza a interface com sucesso
             subscribeButton.textContent = 'Notificações Ativadas!';
             subscribeButton.disabled = true;
             statusEl.textContent = 'Tudo pronto! Você receberá uma notificação de teste em breve.';
 
           } catch (error) {
             console.error('Falha ao se inscrever no push:', error);
-            subscribeButton.disabled = false; // Reabilita o botão em caso de erro
+            subscribeButton.disabled = false;
             if (Notification.permission === 'denied') {
               statusEl.textContent = 'Você bloqueou as notificações. Altere nas configurações do navegador.';
             } else {
-              statusEl.textContent = 'Falha ao ativar notificações. Verifique o console (F12).';
+              statusEl.textContent = 'Falha ao ativar notificações.';
             }
           }
         }
-
-        async function initializeUI() {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-                if (statusEl) statusEl.textContent = 'Push não é suportado neste navegador.';
-                if (subscribeButton) subscribeButton.disabled = true;
-                return;
-            }
-
-            try {
-                // Usamos .ready para garantir que o SW esteja ativo antes de checar a inscrição
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
-
-                if (subscription) {
-                    subscribeButton.textContent = 'Notificações Ativadas';
-                    subscribeButton.disabled = true;
-                    statusEl.textContent = 'Lembretes ativados para este dispositivo.';
-                } else {
-                    subscribeButton.disabled = false;
-                    subscribeButton.addEventListener('click', () => {
-                        subscribeButton.disabled = true; // Desabilita para evitar cliques duplos
-                        registerAndSubscribe();
-                    });
-                }
-            } catch (error) {
-                console.error('Erro ao inicializar UI de push:', error);
-                if (statusEl) statusEl.textContent = 'Erro ao verificar status das notificações.';
-                if (subscribeButton) subscribeButton.disabled = true;
-            }
-        }
         
-        // A lógica só roda se o botão de notificação existir na página
         if (subscribeButton) {
             initializeUI();
         }
@@ -965,10 +974,6 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     </div>
   `, pushScripts));
 });
-
-// ########################################################################
-// ######################### FIM DA CORREÇÃO ##############################
-// ########################################################################
 
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
     try {
