@@ -15,7 +15,7 @@ const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
-const webpush = require('web-push'); // <-- Biblioteca de Push
+const webpush = require('web-push');
 
 // =====================
 // Config & Branding
@@ -28,8 +28,8 @@ const BRAND = {
 };
 
 // Sessão/atividade
-const MAX_IDLE_MS = 10 * 60 * 1000; // 10 minutos de inatividade
-const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // TTL máximo do token (12h) como hard cap
+const MAX_IDLE_MS = 10 * 60 * 1000;
+const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
 // =====================
 // App base
@@ -38,7 +38,6 @@ const app = express();
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
 
-// Rota para o Service Worker
 app.get('/service-worker.js', (req, res) => {
     res.sendFile(path.resolve(__dirname, 'public', 'service-worker.js'));
 });
@@ -66,7 +65,7 @@ if (process.env.SMTP_HOST) {
 // Configuração do Web Push com as chaves VAPID
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     webpush.setVapidDetails(
-        process.env.VAPID_SUBJECT, // mailto:seuemail@dominio.com
+        process.env.VAPID_SUBJECT,
         process.env.VAPID_PUBLIC_KEY,
         process.env.VAPID_PRIVATE_KEY
     );
@@ -82,7 +81,7 @@ app.use(cookieParser());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 150 }));
 app.set('trust proxy', 1);
 
-// Upload: 2 MB em memória
+// Upload
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
 
 // =====================
@@ -127,7 +126,7 @@ async function sendEmail(to, subject, html) {
 }
 
 async function sendPushNotification(userId, payload) {
-    if (!process.env.VAPID_PUBLIC_KEY) return; // Não faz nada se as chaves não estiverem configuradas
+    if (!process.env.VAPID_PUBLIC_KEY) return;
     try {
         const { rows: subscriptions } = await pool.query(
             'SELECT id, subscription FROM push_subscriptions WHERE user_id = $1',
@@ -141,7 +140,6 @@ async function sendPushNotification(userId, payload) {
         const promises = subscriptions.map(s =>
             webpush.sendNotification(s.subscription, notificationPayload)
             .catch(error => {
-                // Erro 410 Gone significa que a inscrição expirou e deve ser removida
                 if (error.statusCode === 410) {
                     console.log(`Inscrição ${s.id} expirou. Removendo do banco.`);
                     return pool.query('DELETE FROM push_subscriptions WHERE id = $1', [s.id]);
@@ -177,7 +175,7 @@ function verifyToken(token, secretEnv = 'SESSION_SECRET') {
     if (sig !== s) return null;
     try {
         const data = JSON.parse(Buffer.from(b, 'base64url').toString());
-        if (!data.exp || data.exp < nowMs()) return null; // TTL universal
+        if (!data.exp || data.exp < nowMs()) return null;
         return data;
     } catch {
         return null;
@@ -185,8 +183,6 @@ function verifyToken(token, secretEnv = 'SESSION_SECRET') {
 }
 
 function refreshActivityCookie(kind, data) {
-    // kind: 'admin' | 'vol'
-    // reemite cookie com lastActivity atualizada
     const updated = { ...data, lastActivity: nowMs() };
     const token = signToken(updated);
     return { name: kind === 'admin' ? 'admin_session' : 'vol_session', token };
@@ -202,7 +198,6 @@ function clearAllSessions(res) {
     res.clearCookie('admin_session');
 }
 
-// No-cache para telas sensíveis
 function setNoCacheHeaders(req, res, next) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.setHeader('Pragma', 'no-cache');
@@ -210,7 +205,6 @@ function setNoCacheHeaders(req, res, next) {
     next();
 }
 
-// Proteções de rota com idle check e renovação
 function requireAdmin(req, res, next) {
     const t = req.cookies['admin_session'];
     const data = verifyToken(t);
@@ -221,7 +215,6 @@ function requireAdmin(req, res, next) {
         clearAllSessions(res);
         return res.redirect('/admin/login');
     }
-    // renova atividade
     const { name, token } = refreshActivityCookie('admin', data);
     res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
     req.admin = data;
@@ -254,7 +247,6 @@ function requireVolunteer(req, res, next) {
         clearAllSessions(res);
         return res.redirect('/login');
     }
-    // renova atividade
     const { name, token } = refreshActivityCookie('vol', data);
     res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
     req.vol = data;
@@ -307,7 +299,6 @@ async function extractFromPdf(pdfBuffer) {
     const cpfMatch = text.match(/CPF\s*(?:N[º°:])?\s*(\d{3}\.\d{3}\.\d{3}-\d{2})/);
     const pdf_cpf = cpfMatch ? cpfMatch[1].replace(/\D/g, '') : null;
     const cert_number = numMatch ? numMatch[1] : null;
-    // <-- CORREÇÃO 1: Lógica de validade alterada para 6 meses.
     const expires_at = (issued_at && issued_at.isValid()) ? issued_at.add(6, 'month') : null;
     let cac_result = 'desconhecido';
     if (text.includes('NÃO CONSTA') || text.includes('NADA CONSTA')) {
@@ -338,7 +329,6 @@ const baseHead = (title) => `
 `;
 
 const antiBFCacheScript = `
-  // Se a página veio do BFCache, recarrega para forçar verificação de sessão
   window.addEventListener('pageshow', function(e){
     if (e.persisted) {
       window.location.reload();
@@ -570,7 +560,6 @@ const adminPage = (title, bodyHtml, admin = null) => {
 // =====================
 // Rotas Públicas
 // =====================
-// ... (O conteúdo das rotas públicas foi omitido para encurtar, mas está igual ao seu)
 app.get('/', (_req, res) => {
     res.type('html').send(page('Início', `
     <div class="grid md:grid-cols-2 gap-8 items-center">
@@ -614,7 +603,6 @@ app.get('/termo-lgpd', (_req, res) => {
 // =====================
 // Cadastro de voluntário
 // =====================
-// ... (O conteúdo do cadastro foi omitido para encurtar, mas está igual ao seu)
 app.get('/cadastro', (_req, res) => {
     res.type('html').send(page('Cadastro', `
     <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
@@ -740,9 +728,7 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
 // =====================
 // Login voluntário
 // =====================
-// ... (O conteúdo do login foi omitido para encurtar, mas está igual ao seu)
 app.get('/login', setNoCacheHeaders, (_req, res) => {
-    // Limpa qualquer sessão ativa ao chegar na tela de login
     clearAllSessions(res);
     res.send(page('Login', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -783,25 +769,21 @@ app.post('/login', async (req, res) => {
 // Painel do voluntário
 // =====================
 
-// <-- NOVO: Rota para salvar a inscrição de push no banco de dados
 app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
     try {
         const subscription = req.body;
         const userId = req.vol.volunteer_id;
         
-        // Validação básica do objeto de inscrição
         if (!subscription || !subscription.endpoint) {
             return res.status(400).json({ error: 'Objeto de inscrição inválido.' });
         }
 
-        // Usamos ON CONFLICT para evitar duplicatas
         await pool.query(
           `INSERT INTO push_subscriptions (user_id, subscription) VALUES ($1, $2)
            ON CONFLICT (user_id, (subscription->>'endpoint')) DO NOTHING`,
           [userId, subscription]
         );
 
-        // Envia uma notificação de "bem-vindo" para confirmar que funcionou
         const payload = JSON.stringify({
             title: 'Lembretes Ativados!',
             body: 'Tudo certo! Você será notificado quando for a hora de renovar seu CAC.'
@@ -811,29 +793,19 @@ app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
         res.status(201).json({ message: 'Inscrição salva com sucesso.' });
     } catch (error) {
         console.error("Erro ao salvar inscrição ou enviar push de confirmação:", error);
-        // Mesmo que o push de confirmação falhe, a inscrição pode ter sido salva.
         if (!res.headersSent) {
             res.status(500).json({ error: 'Erro ao processar a inscrição.' });
         }
     }
 });
 
-
-// <-- CORREÇÃO 2: INÍCIO - Rota /meu/painel completamente reescrita
+// <--- INÍCIO DA CORREÇÃO 
 app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
-    // 1. Pega os dados do usuário (como antes)
     const { rows: userRows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
     if (userRows.length === 0) {
         return res.redirect('/login');
     }
     const r = userRows[0];
-
-    // 2. NOVO: Verifica no banco se ESTE usuário já tem inscrição
-    const { rows: subscriptionRows } = await pool.query(
-        'SELECT id FROM push_subscriptions WHERE user_id = $1 LIMIT 1',
-        [req.vol.volunteer_id]
-    );
-    const isAlreadySubscribed = subscriptionRows.length > 0;
 
     const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
     const exp = r.expires_at ? dayjs(r.expires_at).format('DD/MM/YYYY') : '-';
@@ -852,10 +824,8 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         <h3 class="font-semibold mb-2">Atualizar dados</h3>
         <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
           <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2" value="${r.email || ''}"/></div>
-          
           <div><label class="block text-sm">Telefone (opcional)</label><input name="telefone" type="tel" class="w-full border rounded px-3 py-2" value="${r.telefone || ''}"/></div>
           <div><label class="block text-sm">Nome do Coordenador (opcional)</label><input name="nome_coordenador" type="text" class="w-full border rounded px-3 py-2" value="${r.nome_coordenador || ''}"/></div>
-          
           <div>
             <label class="block text-sm">Sua Rede (opcional)</label>
             <select name="rede" class="w-full border rounded px-3 py-2">
@@ -867,7 +837,6 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
               <option value="Azul" ${r.rede === 'Azul' ? 'selected' : ''}>Azul</option>
             </select>
           </div>
-
           <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
           <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
           <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
@@ -881,13 +850,11 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
           </div>
         </div>`;
     
-    // 3. ALTERADO: O script agora recebe a informação 'isAlreadySubscribed' do servidor
     const pushScripts = `
       <script>
         const VAPID_PUBLIC_KEY = '${process.env.VAPID_PUBLIC_KEY}';
         const subscribeButton = document.getElementById('subscribe-button');
         const statusEl = document.getElementById('push-status');
-        const isAlreadySubscribedOnServer = ${isAlreadySubscribed}; // <-- USA A VARIÁVEL DO SERVIDOR
 
         function urlBase64ToUint8Array(base64String) {
           const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -901,36 +868,43 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         }
 
         async function initializeUI() {
-            if (isAlreadySubscribedOnServer) {
-                console.log('Usuário já inscrito no servidor.');
-                subscribeButton.textContent = 'Notificações Ativadas';
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                statusEl.textContent = 'Push não é suportado neste navegador.';
                 subscribeButton.disabled = true;
-                statusEl.textContent = 'Você já está recebendo lembretes neste dispositivo ou em outro.';
-            } else {
-                subscribeButton.addEventListener('click', () => {
+                return;
+            }
+
+            try {
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+
+                if (subscription) {
+                    console.log('Este navegador já está inscrito.');
+                    subscribeButton.textContent = 'Notificações Ativadas';
                     subscribeButton.disabled = true;
-                    registerAndSubscribe();
-                });
+                    statusEl.textContent = 'Lembretes ativados para este dispositivo.';
+                } else {
+                    console.log('Este navegador não está inscrito. Habilitando botão.');
+                    subscribeButton.disabled = false;
+                    subscribeButton.addEventListener('click', () => {
+                        subscribeButton.disabled = true;
+                        registerAndSubscribe();
+                    });
+                }
+            } catch (error) {
+                console.error('Erro ao inicializar UI de push:', error);
+                statusEl.textContent = 'Erro ao verificar status das notificações.';
             }
         }
 
         async function registerAndSubscribe() {
-          if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-            statusEl.textContent = 'Push não é suportado neste navegador.';
-            subscribeButton.disabled = true;
-            return;
-          }
-
           try {
             const registration = await navigator.serviceWorker.register('/service-worker.js');
-            console.log('Service Worker Registrado:', registration);
             
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
             });
-
-            console.log('Nova inscrição:', subscription);
 
             await fetch('/meu/save-subscription', {
               method: 'POST',
@@ -984,9 +958,8 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     </div>
   `, pushScripts));
 });
-// <-- CORREÇÃO 2: FIM
+// <--- FIM DA CORREÇÃO
 
-// ... (O conteúdo das rotas /meu/ver-pdf, /logout, /meu/atualizar, etc., foi omitido para encurtar, mas está igual ao seu)
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
     try {
         const id = req.vol.volunteer_id;
@@ -1117,10 +1090,6 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     }
 });
 
-// =====================
-// Reset de senha voluntário
-// =====================
-// ... (O conteúdo do reset foi omitido para encurtar, mas está igual ao seu)
 app.get('/forgot', setNoCacheHeaders, (_req, res) => {
     res.send(page('Esqueci minha senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -1191,14 +1160,11 @@ app.post('/reset', async (req, res) => {
     res.send(page('OK', '<p>Senha atualizada com sucesso. <a href="/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
 });
 
-
 // =====================
 // Admin
 // =====================
-// ... (O conteúdo do admin foi omitido para encurtar, mas está igual ao seu)
 app.get('/admin/login', setNoCacheHeaders, (_req, res) => {
     clearAllSessions(res);
-
     res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Acesso do administrador</h2>
@@ -1236,7 +1202,6 @@ app.post('/admin/login', async (req,res)=>{
   res.redirect('/admin/painel');
 });
 
-// Reset de senha Admin
 app.get('/admin/forgot', setNoCacheHeaders, (_req, res) => {
   res.send(adminPage('Esqueci minha senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
@@ -1719,7 +1684,6 @@ app.post('/auth/ping', (req, res) => {
             res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
         }
     }
-    // sempre no-store
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.json({ ok: true });
 });
@@ -1728,6 +1692,7 @@ app.post('/auth/ping', (req, res) => {
 // Housekeeping & Cron Jobs
 // =====================
 
+// <--- INÍCIO DA CORREÇÃO: Texto do Email Restaurado
 app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
     // 1. Segurança: Verifica se a chave do cron job está correta
     if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) {
@@ -1747,18 +1712,25 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
             );
 
             for (const user of usersToRemind) {
-                const subject = `Lembrete: Atualize seu CAC no Atitude Kids em ${day} dia(s)`;
+                const subject = `Lembrete: Atualize seu CAC no Atitude Kids`;
                 const dueDate = dayjs(user.issued_at).add(6, 'months').format('DD/MM/YYYY');
-                const htmlBody = `<p>Olá, ${user.nome}!</p><p>Sua Certidão de Antecedentes Criminais vencerá em <strong>${dueDate}</strong>. Por favor, acesse seu painel para enviar uma nova.</p><p><a href="${process.env.APP_BASE_URL || ''}/login">Acessar meu painel</a></p>`;
                 
-                // Enviar e-mail
+                const htmlBody = `
+                  <p>Olá, ${user.nome}!</p>
+                  <p>Esperamos que esta mensagem o encontre bem.</p>
+                  <p>Para continuarmos em conformidade com as boas práticas de segurança e com a legislação vigente, nosso ministério realiza a renovação da Certidão de Antecedentes Criminais (CAC) de todos os servos a cada 6 meses.</p>
+                  <p>A data de emissão do seu último documento completará 6 meses em <strong>${dueDate}</strong>. Para nos ajudar a manter seu cadastro atualizado, por favor, acesse seu painel em nosso site e envie uma certidão recém-emitida.</p>
+                  <p><a href="${process.env.APP_BASE_URL || ''}/login">Acessar meu painel</a></p>
+                  <p>Agradecemos imensamente seu tempo, seu serviço e seu cuidado contínuo com a segurança de nossas crianças.</p>
+                  <p>Um abraço,<br>Liderança Atitude Kids</p>
+                `;
+                
                 await sendEmail(user.email, subject, htmlBody);
                 emailsSent++;
 
-                // Enviar notificação push
                 await sendPushNotification(user.id, {
-                    title: subject,
-                    body: `Sua certidão vencerá em ${dueDate}. Clique para atualizar.`
+                    title: `Lembrete de Renovação - Atitude Kids`,
+                    body: `Sua certidão precisa ser renovada até ${dueDate}. Clique para atualizar.`
                 });
                 pushSent++;
             }
@@ -1790,6 +1762,7 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
         res.status(500).send('Erro ao executar a rotina de lembretes.');
     }
 });
+// <--- FIM DA CORREÇÃO
 
 app.post('/cron/housekeeping', async (req, res) => {
     if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) return res.status(401).send('unauthorized');
