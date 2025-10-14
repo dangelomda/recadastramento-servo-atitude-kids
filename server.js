@@ -831,7 +831,13 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
           <h3 class="font-semibold mb-2">Lembretes no Navegador</h3>
           <p class="text-sm mb-3">Clique no botão para ativar as notificações e ser lembrado de renovar seu CAC diretamente no seu dispositivo.</p>
           <button id="subscribe-button" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm hover:bg-green-700 disabled:bg-gray-400">Ativar Notificações</button>
-          <p id="push-status" class="text-xs mt-2"></p>
+          
+          <div class="mt-2">
+            <button id="btn-reinstalar-push" class="text-xs text-slate-600 underline hover:text-brand" type="button">
+              Problemas com a notificação? Clique aqui para reinstalar.
+            </button>
+          </div>
+          <p id="push-status" class="text-xs mt-2 text-slate-600"></p>
         </div>
     ` : '';
 
@@ -868,84 +874,146 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     
     const pushScripts = `
       <script>
-        const VAPID_PUBLIC_KEY = '${process.env.VAPID_PUBLIC_KEY}';
-        const subscribeButton = document.getElementById('subscribe-button');
+      (() => {
+        // Assegura que o script só roda se o HTML de notificação existir
+        const notificationContainer = document.querySelector('#subscribe-button');
+        if (!notificationContainer) return;
+
+        const SW_URL = '/service-worker.js';
+        const PUBLIC_VAPID = '${process.env.VAPID_PUBLIC_KEY}';
+        const btnAtivar = document.getElementById('subscribe-button');
+        const btnReinstalar = document.getElementById('btn-reinstalar-push');
         const statusEl = document.getElementById('push-status');
 
+        const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
+        const marcarAtivado = () => {
+            if (btnAtivar) {
+                btnAtivar.textContent = 'Notificações Ativadas';
+                btnAtivar.disabled = true;
+            }
+        };
+
         function urlBase64ToUint8Array(base64String) {
-          const padding = '='.repeat((4 - base64String.length % 4) % 4);
-          const base64 = (base64String + padding).replace(/\\-/g, '+').replace(/_/g, '/');
-          const rawData = window.atob(base64);
-          const outputArray = new Uint8Array(rawData.length);
-          for (let i = 0; i < rawData.length; ++i) {
-            outputArray[i] = rawData.charCodeAt(i);
-          }
-          return outputArray;
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const raw = window.atob(base64);
+            const output = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; ++i) output[i] = raw.charCodeAt(i);
+            return output;
         }
 
-        async function initializeUI() {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-                statusEl.textContent = 'Push não é suportado neste navegador.';
-                subscribeButton.disabled = true;
-                return;
-            }
-
+        async function limparAntigos() {
             try {
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
-
-                if (subscription) {
-                    console.log('Este navegador já está inscrito.');
-                    subscribeButton.textContent = 'Notificações Ativadas';
-                    subscribeButton.disabled = true;
-                    statusEl.textContent = 'Lembretes ativados para este dispositivo.';
-                } else {
-                    console.log('Este navegador não está inscrito. Habilitando botão.');
-                    subscribeButton.disabled = false;
-                    subscribeButton.addEventListener('click', () => {
-                        subscribeButton.disabled = true;
-                        registerAndSubscribe();
-                    });
-                }
-            } catch (error) {
-                console.error('Erro ao inicializar UI de push:', error);
-                statusEl.textContent = 'Erro ao verificar status das notificações.';
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map(r => r.unregister()));
+                const keys = await caches.keys();
+                await Promise.all(keys.map(k => caches.delete(k)));
+                console.log('Cache e SWs antigos limpos.');
+            } catch (e) {
+                console.warn('Falha ao limpar SW/cache:', e);
             }
         }
 
-        async function registerAndSubscribe() {
-          try {
-            const registration = await navigator.serviceWorker.register('/service-worker.js');
-            
-            const subscription = await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-            });
+        async function registrarSW() {
+            if (!('serviceWorker' in navigator)) throw new Error('Service Worker não é suportado');
+            const reg = await navigator.serviceWorker.register(SW_URL);
+            await navigator.serviceWorker.ready;
+            return reg;
+        }
 
-            await fetch('/meu/save-subscription', {
-              method: 'POST',
-              body: JSON.stringify(subscription),
-              headers: { 'Content-Type': 'application/json' },
-            });
+        async function assinarPush(reg) {
+            if (!('PushManager' in window)) throw new Error('Push não é suportado');
             
-            subscribeButton.textContent = 'Notificações Ativadas!';
-            subscribeButton.disabled = true;
-            statusEl.textContent = 'Tudo pronto! Você receberá uma notificação de teste em breve.';
+            let sub = await reg.pushManager.getSubscription();
+            if (sub) return sub; // Já está inscrito
 
-          } catch (error) {
-            console.error('Falha ao se inscrever no push:', error);
-            subscribeButton.disabled = false;
             if (Notification.permission === 'denied') {
-              statusEl.textContent = 'Você bloqueou as notificações. Altere nas configurações do navegador.';
-            } else {
-              statusEl.textContent = 'Falha ao ativar notificações.';
+                throw new Error('Permissão de notificações está negada no navegador');
             }
-          }
+
+            sub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID)
+            });
+
+            const resp = await fetch('/meu/save-subscription', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(sub)
+            });
+            if (!resp.ok) {
+                // Tenta cancelar a inscrição no navegador se o servidor falhar
+                await sub.unsubscribe();
+                throw new Error('Falha ao salvar assinatura no servidor');
+            }
+            return sub;
         }
-        
-        if (subscribeButton) {
-            initializeUI();
+
+        async function reinstalar() {
+            try {
+                setStatus('Reinstalando notificações…');
+                if(btnAtivar) btnAtivar.disabled = true;
+                if(btnReinstalar) btnReinstalar.disabled = true;
+
+                await limparAntigos();
+                const reg = await registrarSW();
+                await assinarPush(reg);
+                
+                setStatus('Notificações ativadas com sucesso!');
+                marcarAtivado();
+            } catch (e) {
+                console.error(e);
+                setStatus('Erro: ' + (e?.message || e));
+            } finally {
+                if(btnReinstalar) btnReinstalar.disabled = false;
+            }
         }
+
+        async function ativar() {
+            try {
+                setStatus('Ativando notificações…');
+                const reg = await registrarSW();
+                await assinarPush(reg);
+                setStatus('Notificações ativadas com sucesso!');
+                marcarAtivado();
+            } catch (e) {
+                console.warn('Ativação normal falhou, tentando auto-reparo:', e);
+                await reinstalar();
+            }
+        }
+
+        async function initialize() {
+            try {
+                const reg = await navigator.serviceWorker.getRegistration();
+                const sub = reg ? await reg.pushManager.getSubscription() : null;
+
+                if (reg && sub) {
+                    setStatus('Lembretes ativados para este dispositivo.');
+                    marcarAtivado();
+                } else {
+                    setStatus('Lembretes não estão ativos neste navegador.');
+                    if(btnAtivar) btnAtivar.disabled = false;
+                }
+            } catch(e) {
+                console.error("Erro na inicialização", e);
+                setStatus('Não foi possível verificar o status das notificações.');
+                if(btnAtivar) btnAtivar.disabled = true;
+            }
+        }
+
+        // --- Ponto de Entrada ---
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            setStatus('Notificações Push não são suportadas neste navegador.');
+            if(btnAtivar) btnAtivar.disabled = true;
+            if(btnReinstalar) btnReinstalar.style.display = 'none';
+        } else {
+            if (btnAtivar) btnAtivar.addEventListener('click', ativar);
+            if (btnReinstalar) btnReinstalar.addEventListener('click', reinstalar);
+            
+            // Inicia a verificação do estado atual
+            window.addEventListener('load', initialize);
+        }
+      })();
       </script>
     `;
 
