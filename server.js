@@ -15,15 +15,16 @@ const { Pool } = require('pg');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const webpush = require('web-push'); // <-- Biblioteca de Push
 
 // =====================
 // Config & Branding
 // =====================
 const ORG = process.env.ORG_NOME || 'Recadastramento Servo Atitude Kids';
 const BRAND = {
-  primary: process.env.BRAND_PRIMARY || '#4f46e5',
-  accent: process.env.BRAND_ACCENT || '#22c55e',
-  logo: process.env.BRAND_LOGO_PATH || '/public/logo.svg',
+    primary: process.env.BRAND_PRIMARY || '#4f46e5',
+    accent: process.env.BRAND_ACCENT || '#22c55e',
+    logo: process.env.BRAND_LOGO_PATH || '/public/logo.svg',
 };
 
 // Sessão/atividade
@@ -37,24 +38,41 @@ const app = express();
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
 
+// Rota para o Service Worker
+app.get('/service-worker.js', (req, res) => {
+    res.sendFile(path.resolve(__dirname, 'public', 'service-worker.js'));
+});
+
 // Infra
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false,
+    },
 });
 
 // Mail
 let transporter = null;
 if (process.env.SMTP_HOST) {
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: String(process.env.SMTP_SECURE || 'false') === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
+    transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: String(process.env.SMTP_SECURE || 'false') === 'true',
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+}
+
+// Configuração do Web Push com as chaves VAPID
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+        process.env.VAPID_SUBJECT, // mailto:seuemail@dominio.com
+        process.env.VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY
+    );
+    console.log('✅ Web Push configurado.');
+} else {
+    console.warn('⚠️  Chaves VAPID não configuradas. Notificações Push estão desabilitadas.');
 }
 
 // Middlewares
@@ -72,199 +90,230 @@ const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
 // =====================
 
 function formatCPF(cpf) {
-  const cleaned = (cpf || '').toString().replace(/\D/g, '');
-  if (cleaned.length !== 11) {
-    return cpf || '-';
-  }
-  return cleaned.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    const cleaned = (cpf || '').toString().replace(/\D/g, '');
+    if (cleaned.length !== 11) {
+        return cpf || '-';
+    }
+    return cleaned.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
 }
 
 function formatPhone(phone) {
-  const cleaned = (phone || '').toString().replace(/\D/g, '');
-  if (cleaned.length === 11) {
-    return cleaned.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
-  }
-  if (cleaned.length === 10) {
-    return cleaned.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
-  }
-  return phone || '-';
+    const cleaned = (phone || '').toString().replace(/\D/g, '');
+    if (cleaned.length === 11) {
+        return cleaned.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+    }
+    if (cleaned.length === 10) {
+        return cleaned.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
+    }
+    return phone || '-';
 }
 
 async function sendEmail(to, subject, html) {
-  if (!transporter) {
-    console.log(`Email não enviado para ${to} (transporter não configurado). Assunto: ${subject}`);
-    return;
-  }
-  try {
-    await transporter.sendMail({
-      from: process.env.MAIL_FROM,
-      to,
-      subject,
-      html
-    });
-    console.log(`Email enviado para ${to}`);
-  } catch (error) {
-    console.error(`Falha ao enviar e-mail para ${to}:`, error);
-  }
+    if (!transporter) {
+        console.log(`Email não enviado para ${to} (transporter não configurado). Assunto: ${subject}`);
+        return;
+    }
+    try {
+        await transporter.sendMail({
+            from: process.env.MAIL_FROM,
+            to,
+            subject,
+            html
+        });
+        console.log(`Email enviado para ${to}`);
+    } catch (error) {
+        console.error(`Falha ao enviar e-mail para ${to}:`, error);
+    }
+}
+
+async function sendPushNotification(userId, payload) {
+    if (!process.env.VAPID_PUBLIC_KEY) return; // Não faz nada se as chaves não estiverem configuradas
+    try {
+        const { rows: subscriptions } = await pool.query(
+            'SELECT id, subscription FROM push_subscriptions WHERE user_id = $1',
+            [userId]
+        );
+        if (subscriptions.length === 0) return;
+
+        console.log(`Enviando push para ${subscriptions.length} dispositivo(s) do usuário ${userId}`);
+        const notificationPayload = JSON.stringify(payload);
+
+        const promises = subscriptions.map(s =>
+            webpush.sendNotification(s.subscription, notificationPayload)
+            .catch(error => {
+                // Erro 410 Gone significa que a inscrição expirou e deve ser removida
+                if (error.statusCode === 410) {
+                    console.log(`Inscrição ${s.id} expirou. Removendo do banco.`);
+                    return pool.query('DELETE FROM push_subscriptions WHERE id = $1', [s.id]);
+                } else {
+                    console.error(`Erro ao enviar push para inscrição ${s.id}:`, error.body);
+                }
+            })
+        );
+        await Promise.all(promises);
+    } catch (error) {
+        console.error(`Erro ao buscar inscrições para o usuário ${userId}:`, error);
+    }
 }
 
 function nowMs() { return Date.now(); }
 
 function signToken(payload, secretEnv = 'SESSION_SECRET') {
-  const secret = process.env[secretEnv] || 'dev-secret';
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const iat = nowMs();
-  const exp = iat + TOKEN_TTL_MS;
-  const full = { ...payload, iat, exp, lastActivity: iat };
-  const body = Buffer.from(JSON.stringify(full)).toString('base64url');
-  const sig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
-  return `${header}.${body}.${sig}`;
+    const secret = process.env[secretEnv] || 'dev-secret';
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const iat = nowMs();
+    const exp = iat + TOKEN_TTL_MS;
+    const full = { ...payload, iat, exp, lastActivity: iat };
+    const body = Buffer.from(JSON.stringify(full)).toString('base64url');
+    const sig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
+    return `${header}.${body}.${sig}`;
 }
 
 function verifyToken(token, secretEnv = 'SESSION_SECRET') {
-  const secret = process.env[secretEnv] || 'dev-secret';
-  const [h, b, s] = (token || '').split('.');
-  if (!h || !b || !s) return null;
-  const sig = crypto.createHmac('sha256', secret).update(`${h}.${b}`).digest('base64url');
-  if (sig !== s) return null;
-  try {
-    const data = JSON.parse(Buffer.from(b, 'base64url').toString());
-    if (!data.exp || data.exp < nowMs()) return null; // TTL universal
-    return data;
-  } catch {
-    return null;
-  }
+    const secret = process.env[secretEnv] || 'dev-secret';
+    const [h, b, s] = (token || '').split('.');
+    if (!h || !b || !s) return null;
+    const sig = crypto.createHmac('sha256', secret).update(`${h}.${b}`).digest('base64url');
+    if (sig !== s) return null;
+    try {
+        const data = JSON.parse(Buffer.from(b, 'base64url').toString());
+        if (!data.exp || data.exp < nowMs()) return null; // TTL universal
+        return data;
+    } catch {
+        return null;
+    }
 }
 
 function refreshActivityCookie(kind, data) {
-  // kind: 'admin' | 'vol'
-  // reemite cookie com lastActivity atualizada
-  const updated = { ...data, lastActivity: nowMs() };
-  const token = signToken(updated);
-  return { name: kind === 'admin' ? 'admin_session' : 'vol_session', token };
+    // kind: 'admin' | 'vol'
+    // reemite cookie com lastActivity atualizada
+    const updated = { ...data, lastActivity: nowMs() };
+    const token = signToken(updated);
+    return { name: kind === 'admin' ? 'admin_session' : 'vol_session', token };
 }
 
 function isIdle(data) {
-  if (!data || !data.lastActivity) return true;
-  return (nowMs() - data.lastActivity) > MAX_IDLE_MS;
+    if (!data || !data.lastActivity) return true;
+    return (nowMs() - data.lastActivity) > MAX_IDLE_MS;
 }
 
 function clearAllSessions(res) {
-  res.clearCookie('vol_session');
-  res.clearCookie('admin_session');
+    res.clearCookie('vol_session');
+    res.clearCookie('admin_session');
 }
 
 // No-cache para telas sensíveis
 function setNoCacheHeaders(req, res, next) {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  next();
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
 }
 
 // Proteções de rota com idle check e renovação
 function requireAdmin(req, res, next) {
-  const t = req.cookies['admin_session'];
-  const data = verifyToken(t);
-  if (!data || !data.role || !data.role.startsWith('admin')) {
-    return res.redirect('/admin/login');
-  }
-  if (isIdle(data)) {
-    clearAllSessions(res);
-    return res.redirect('/admin/login');
-  }
-  // renova atividade
-  const { name, token } = refreshActivityCookie('admin', data);
-  res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
-  req.admin = data;
-  return next();
+    const t = req.cookies['admin_session'];
+    const data = verifyToken(t);
+    if (!data || !data.role || !data.role.startsWith('admin')) {
+        return res.redirect('/admin/login');
+    }
+    if (isIdle(data)) {
+        clearAllSessions(res);
+        return res.redirect('/admin/login');
+    }
+    // renova atividade
+    const { name, token } = refreshActivityCookie('admin', data);
+    res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+    req.admin = data;
+    return next();
 }
 
 function requireSuper(req, res, next) {
-  const t = req.cookies['admin_session']; 
-  const d = verifyToken(t);
-  if (!d || d.role !== 'admin:super') {
-    return res.status(403).send('Somente super admin.');
-  }
-  if (isIdle(d)) {
-    clearAllSessions(res);
-    return res.redirect('/admin/login');
-  }
-  const { name, token } = refreshActivityCookie('admin', d);
-  res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
-  req.admin = d;
-  return next();
+    const t = req.cookies['admin_session'];
+    const d = verifyToken(t);
+    if (!d || d.role !== 'admin:super') {
+        return res.status(403).send('Somente super admin.');
+    }
+    if (isIdle(d)) {
+        clearAllSessions(res);
+        return res.redirect('/admin/login');
+    }
+    const { name, token } = refreshActivityCookie('admin', d);
+    res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+    req.admin = d;
+    return next();
 }
 
 function requireVolunteer(req, res, next) {
-  const t = req.cookies['vol_session'];
-  const data = verifyToken(t);
-  if (!data || !data.volunteer_id) {
-    return res.redirect('/login');
-  }
-  if (isIdle(data)) {
-    clearAllSessions(res);
-    return res.redirect('/login');
-  }
-  // renova atividade
-  const { name, token } = refreshActivityCookie('vol', data);
-  res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
-  req.vol = data;
-  return next();
+    const t = req.cookies['vol_session'];
+    const data = verifyToken(t);
+    if (!data || !data.volunteer_id) {
+        return res.redirect('/login');
+    }
+    if (isIdle(data)) {
+        clearAllSessions(res);
+        return res.redirect('/login');
+    }
+    // renova atividade
+    const { name, token } = refreshActivityCookie('vol', data);
+    res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+    req.vol = data;
+    return next();
 }
 
 function badge(status, cacResult) {
-  if (status === 'inapto') return '🔴 Inapto';
-  if (status === 'atencao') return '🟡 Atenção';
-  if (status === 'apto' && cacResult === 'nada_consta') return '✅ Apto';
-  if (status === 'apto') return '⚠️ Apto (Revisar)';
-  return '⚪ Em revisão';
+    if (status === 'inapto') return '🔴 Inapto';
+    if (status === 'atencao') return '🟡 Atenção';
+    if (status === 'apto' && cacResult === 'nada_consta') return '✅ Apto';
+    if (status === 'apto') return '⚠️ Apto (Revisar)';
+    return '⚪ Em revisão';
 }
 
 // =====================
 // PDF parsing
 // =====================
 async function extractFromPdf(pdfBuffer) {
-  const pdfData = await pdfParse(pdfBuffer);
-  const text = (pdfData.text || '').toUpperCase().replace(/\s+/g, ' ');
-  const numMatch = text.match(/N[º°:]\s*(\d{6,})/) || text.match(/CRIMINAIS N° (\d+)/);
-  const datePatterns = [
-    /FOI EXPEDIDA EM (\d{2}\/\d{2}\/\d{4})/,
-    /EXPEDIDA EM\s*(\d{2}\/\d{2}\/\d{4})/,
-    /EMITIDA EM\s*(\d{2}\/\d{2}\/\d{4})/,
-    /DATA DE EXPEDI[ÇC][AÃ]O\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/
-  ];
-  let issued_at = null;
-  for (const regex of datePatterns) {
-    const match = text.match(regex);
-    if (match && match[1]) {
-      const parsedDate = dayjs(match[1], 'DD/MM/YYYY');
-      if (parsedDate.isValid()) {
-        issued_at = parsedDate;
-        break; 
-      }
-    }
-  }
-  if ((!issued_at || !issued_at.isValid()) && !text.includes('EXPEDIDA EM')) {
-    const anyDate = text.match(/(\d{2}\/\d{2}\/\d{4})/);
-    if (anyDate && anyDate[1]) {
-        if (!text.includes(`NASCIDO(A) AOS ${anyDate[1]}`)) {
-            const parsedDate = dayjs(anyDate[1], 'DD/MM/YYYY');
+    const pdfData = await pdfParse(pdfBuffer);
+    const text = (pdfData.text || '').toUpperCase().replace(/\s+/g, ' ');
+    const numMatch = text.match(/N[º°:]\s*(\d{6,})/) || text.match(/CRIMINAIS N° (\d+)/);
+    const datePatterns = [
+        /FOI EXPEDIDA EM (\d{2}\/\d{2}\/\d{4})/,
+        /EXPEDIDA EM\s*(\d{2}\/\d{2}\/\d{4})/,
+        /EMITIDA EM\s*(\d{2}\/\d{2}\/\d{4})/,
+        /DATA DE EXPEDI[ÇC][AÃ]O\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/
+    ];
+    let issued_at = null;
+    for (const regex of datePatterns) {
+        const match = text.match(regex);
+        if (match && match[1]) {
+            const parsedDate = dayjs(match[1], 'DD/MM/YYYY');
             if (parsedDate.isValid()) {
-              issued_at = parsedDate;
+                issued_at = parsedDate;
+                break;
             }
         }
     }
-  }
-  const cpfMatch = text.match(/CPF\s*(?:N[º°:])?\s*(\d{3}\.\d{3}\.\d{3}-\d{2})/);
-  const pdf_cpf = cpfMatch ? cpfMatch[1].replace(/\D/g, '') : null;
-  const cert_number = numMatch ? numMatch[1] : null;
-  const expires_at = (issued_at && issued_at.isValid()) ? issued_at.add(90, 'day') : null;
-  let cac_result = 'desconhecido';
-  if (text.includes('NÃO CONSTA') || text.includes('NADA CONSTA')) {
-    cac_result = 'nada_consta';
-  }
-  return { cert_number, issued_at, expires_at, cac_result, pdf_cpf };
+    if ((!issued_at || !issued_at.isValid()) && !text.includes('EXPEDIDA EM')) {
+        const anyDate = text.match(/(\d{2}\/\d{2}\/\d{4})/);
+        if (anyDate && anyDate[1]) {
+            if (!text.includes(`NASCIDO(A) AOS ${anyDate[1]}`)) {
+                const parsedDate = dayjs(anyDate[1], 'DD/MM/YYYY');
+                if (parsedDate.isValid()) {
+                    issued_at = parsedDate;
+                }
+            }
+        }
+    }
+    const cpfMatch = text.match(/CPF\s*(?:N[º°:])?\s*(\d{3}\.\d{3}\.\d{3}-\d{2})/);
+    const pdf_cpf = cpfMatch ? cpfMatch[1].replace(/\D/g, '') : null;
+    const cert_number = numMatch ? numMatch[1] : null;
+    // <-- CORREÇÃO 1: Lógica de validade alterada para 6 meses.
+    const expires_at = (issued_at && issued_at.isValid()) ? issued_at.add(6, 'month') : null;
+    let cac_result = 'desconhecido';
+    if (text.includes('NÃO CONSTA') || text.includes('NADA CONSTA')) {
+        cac_result = 'nada_consta';
+    }
+    return { cert_number, issued_at, expires_at, cac_result, pdf_cpf };
 }
 
 // =====================
@@ -288,7 +337,6 @@ const baseHead = (title) => `
 </style>
 `;
 
-// códigos utilitários para evitar BFCache (navegar voltar/avançar)
 const antiBFCacheScript = `
   // Se a página veio do BFCache, recarrega para forçar verificação de sessão
   window.addEventListener('pageshow', function(e){
@@ -299,14 +347,13 @@ const antiBFCacheScript = `
 `;
 
 function activityHeartbeatScript(kind) {
-  // kind: 'vol' | 'admin' | 'public'
-  return `
+    return `
   (function(){
     const SESSION_KIND='${kind}';
     const PING_URL='/auth/ping';
     let lastSent=0;
     let pending=false;
-    const DEBOUNCE=3000; // evita flood
+    const DEBOUNCE=3000;
     function ping(){
       const now=Date.now();
       if (pending || (now-lastSent)<DEBOUNCE) return;
@@ -322,13 +369,12 @@ function activityHeartbeatScript(kind) {
         if (document.visibilityState !== 'hidden') ping();
       }, {passive:true});
     });
-    // ping inicial
     ping();
   })();
   `;
 }
 
-const page = (title, bodyHtml) => `<!doctype html>
+const page = (title, bodyHtml, extraScripts = '') => `<!doctype html>
 <html lang="pt-BR">
 <head>
 ${baseHead(title)}
@@ -420,13 +466,12 @@ ${bodyHtml}
     });
   });
 
-  // Heartbeat em páginas públicas (não fará nada no servidor se não houver sessão)
   ${activityHeartbeatScript('public')}
 </script>
+${extraScripts} 
 </body>
 </html>`;
 
-// ===== adminPage (header consistente e estado logado) =====
 const adminPage = (title, bodyHtml, admin = null) => {
     const navLinksDesktop = admin && admin.email
       ? `
@@ -516,7 +561,6 @@ const adminPage = (title, bodyHtml, admin = null) => {
         });
       });
 
-      // Heartbeat para admin
       ${activityHeartbeatScript('admin')}
     </script>
     </body>
@@ -526,8 +570,9 @@ const adminPage = (title, bodyHtml, admin = null) => {
 // =====================
 // Rotas Públicas
 // =====================
+// ... (O conteúdo das rotas públicas foi omitido para encurtar, mas está igual ao seu)
 app.get('/', (_req, res) => {
-  res.type('html').send(page('Início', `
+    res.type('html').send(page('Início', `
     <div class="grid md:grid-cols-2 gap-8 items-center">
       <div>
         <h1 class="text-3xl font-bold mb-4">Recadastramento Servo Atitude Kids</h1>
@@ -552,7 +597,7 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/termo-lgpd', (_req, res) => {
-  res.type('html').send(page('Termo LGPD', `
+    res.type('html').send(page('Termo LGPD', `
     <div class="max-w-2xl mx-auto">
       <h2 class="text-2xl font-semibold mb-4">Termo de Consentimento e Privacidade</h2>
       <p>Autorizo a ${ORG} a utilizar minha CAC exclusivamente para avaliação de aptidão ao ministério infantil (Kids), conforme LGPD.</p>
@@ -569,8 +614,9 @@ app.get('/termo-lgpd', (_req, res) => {
 // =====================
 // Cadastro de voluntário
 // =====================
+// ... (O conteúdo do cadastro foi omitido para encurtar, mas está igual ao seu)
 app.get('/cadastro', (_req, res) => {
-  res.type('html').send(page('Cadastro', `
+    res.type('html').send(page('Cadastro', `
     <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-4">Crie sua conta</h2>
       <form method="post" action="/cadastro" enctype="multipart/form-data">
@@ -616,88 +662,89 @@ app.get('/cadastro', (_req, res) => {
 });
 
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
-  try {
-    const { nome, cpf, email, password, consent, rede, telefone, nome_coordenador } = req.body;
-    const cpfClean = (cpf || '').replace(/\D/g, '');
-    const emailClean = (email || '').trim().toLowerCase();
-    const telefoneClean = (telefone || '').replace(/\D/g, '');
+    try {
+        const { nome, cpf, email, password, consent, rede, telefone, nome_coordenador } = req.body;
+        const cpfClean = (cpf || '').replace(/\D/g, '');
+        const emailClean = (email || '').trim().toLowerCase();
+        const telefoneClean = (telefone || '').replace(/\D/g, '');
 
-    const { rows: existingUsers } = await pool.query(
-      'SELECT id FROM cadastros WHERE cpf = $1 OR email = $2',
-      [cpfClean, emailClean]
-    );
+        const { rows: existingUsers } = await pool.query(
+            'SELECT id FROM cadastros WHERE cpf = $1 OR email = $2',
+            [cpfClean, emailClean]
+        );
 
-    if (existingUsers.length > 0) {
-      return res.status(409).send(page('Erro', '<p class="text-red-600 font-semibold">CPF ou E-mail já cadastrado. Se você já tem uma conta, por favor, <a href="/login" class="link-brand underline">faça o login</a>.</p>'));
-    }
-
-    if (!nome || !cpf || !email || !password || !rede || !telefone || !nome_coordenador || consent !== 'on' || !req.file)
-      return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
-    
-    if (!cpfValidator.isValid(cpfClean))
-      return res.status(400).send(page('Erro', '<p>CPF inválido.</p>'));
-
-    if (req.file.mimetype !== 'application/pdf')
-      return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
-    
-    const password_hash = await bcrypt.hash(password, 10);
-    const pdfBuffer = req.file.buffer;
-    
-    const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
-
-    if (!cert_number || !issued_at || !issued_at.isValid()) {
-      return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
-    }
-
-    if (!pdf_cpf) {
-      return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O documento enviado não contém um número de CPF. Por favor, emita uma nova Certidão no site do Gov.br, garantindo que o CPF seja incluído.</p>'));
-    }
-    if (pdf_cpf !== cpfClean) {
-      return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF informado no formulário não corresponde ao CPF encontrado no documento PDF. Por favor, envie o seu próprio documento.</p>'));
-    }
-    
-    const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
-    let status = 'em_revisao';
-    if (issued_at && expires_at) { 
-      const now = dayjs();
-      if (now.isAfter(expires_at)) {
-        status = 'inapto';
-      } else if (cac_result === 'nada_consta') {
-        if (expires_at.diff(now, 'day') <= 15) {
-          status = 'atencao';
-        } else {
-          status = 'apto';
+        if (existingUsers.length > 0) {
+            return res.status(409).send(page('Erro', '<p class="text-red-600 font-semibold">CPF ou E-mail já cadastrado. Se você já tem uma conta, por favor, <a href="/login" class="link-brand underline">faça o login</a>.</p>'));
         }
-      }
-    }
-    const key = `cac/${Date.now()}_${cert_number}.pdf`;
-    const { error: uploadError } = await supabase.storage
-        .from(process.env.SUPABASE_BUCKET)
-        .upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-    if (uploadError) throw uploadError;
-    
-    const insert = `
+
+        if (!nome || !cpf || !email || !password || !rede || !telefone || !nome_coordenador || consent !== 'on' || !req.file)
+            return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
+
+        if (!cpfValidator.isValid(cpfClean))
+            return res.status(400).send(page('Erro', '<p>CPF inválido.</p>'));
+
+        if (req.file.mimetype !== 'application/pdf')
+            return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
+
+        const password_hash = await bcrypt.hash(password, 10);
+        const pdfBuffer = req.file.buffer;
+
+        const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
+
+        if (!cert_number || !issued_at || !issued_at.isValid()) {
+            return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
+        }
+
+        if (!pdf_cpf) {
+            return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O documento enviado não contém um número de CPF. Por favor, emita uma nova Certidão no site do Gov.br, garantindo que o CPF seja incluído.</p>'));
+        }
+        if (pdf_cpf !== cpfClean) {
+            return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF informado no formulário não corresponde ao CPF encontrado no documento PDF. Por favor, envie o seu próprio documento.</p>'));
+        }
+
+        const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
+        let status = 'em_revisao';
+        if (issued_at && expires_at) {
+            const now = dayjs();
+            if (now.isAfter(expires_at)) {
+                status = 'inapto';
+            } else if (cac_result === 'nada_consta') {
+                if (expires_at.diff(now, 'day') <= 15) {
+                    status = 'atencao';
+                } else {
+                    status = 'apto';
+                }
+            }
+        }
+        const key = `cac/${Date.now()}_${cert_number}.pdf`;
+        const { error: uploadError } = await supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+        if (uploadError) throw uploadError;
+
+        const insert = `
       INSERT INTO cadastros
       (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede, telefone, nome_coordenador)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12, $13, $14) RETURNING id
     `;
-    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefoneClean, nome_coordenador.trim()];
-    const { rows } = await pool.query(insert, vals);
-    const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
-    res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
-    res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
-  } catch (e) {
-    next(e);
-  }
+        const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefoneClean, nome_coordenador.trim()];
+        const { rows } = await pool.query(insert, vals);
+        const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
+        res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
+        res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
+    } catch (e) {
+        next(e);
+    }
 });
 
 // =====================
 // Login voluntário
 // =====================
+// ... (O conteúdo do login foi omitido para encurtar, mas está igual ao seu)
 app.get('/login', setNoCacheHeaders, (_req, res) => {
-  // Limpa qualquer sessão ativa ao chegar na tela de login
-  clearAllSessions(res);
-  res.send(page('Login', `
+    // Limpa qualquer sessão ativa ao chegar na tela de login
+    clearAllSessions(res);
+    res.send(page('Login', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Login do Servo</h2>
       <form method="post" action="/login" class="space-y-3">
@@ -720,28 +767,88 @@ app.get('/login', setNoCacheHeaders, (_req, res) => {
 });
 
 app.post('/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  const { rows } = await pool.query('SELECT id,password_hash FROM cadastros WHERE email=$1 LIMIT 1', [email?.trim().toLowerCase()]);
-  if (!rows.length || !(await bcrypt.compare(password || '', rows[0].password_hash || '')))
-    return res.send(page('Login', '<p>Credenciais inválidas.</p>'));
+    const { email, password } = req.body || {};
+    const { rows } = await pool.query('SELECT id,password_hash FROM cadastros WHERE email=$1 LIMIT 1', [email?.trim().toLowerCase()]);
+    if (!rows.length || !(await bcrypt.compare(password || '', rows[0].password_hash || '')))
+        return res.send(page('Login', '<p>Credenciais inválidas.</p>'));
 
-  const token = signToken({ volunteer_id: rows[0].id, email: (email || '').trim().toLowerCase() });
-  res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
-  await pool.query('UPDATE cadastros SET last_login_at=NOW() WHERE id=$1', [rows[0].id]);
-  res.redirect('/meu/painel');
+    const token = signToken({ volunteer_id: rows[0].id, email: (email || '').trim().toLowerCase() });
+    res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
+    await pool.query('UPDATE cadastros SET last_login_at=NOW() WHERE id=$1', [rows[0].id]);
+    res.redirect('/meu/painel');
 });
+
 
 // =====================
 // Painel do voluntário
 // =====================
-app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
-  const r = rows[0];
-  const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
-  const exp = r.expires_at ? dayjs(r.expires_at).format('DD/MM/YYYY') : '-';
 
-  const updateFormHtml = (r.status === 'apto' || r.status === 'em_revisao')
-    ? `<div class="mt-6 pt-6 border-t">
+// <-- NOVO: Rota para salvar a inscrição de push no banco de dados
+app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
+    try {
+        const subscription = req.body;
+        const userId = req.vol.volunteer_id;
+        
+        // Validação básica do objeto de inscrição
+        if (!subscription || !subscription.endpoint) {
+            return res.status(400).json({ error: 'Objeto de inscrição inválido.' });
+        }
+
+        // Usamos ON CONFLICT para evitar duplicatas
+        await pool.query(
+          `INSERT INTO push_subscriptions (user_id, subscription) VALUES ($1, $2)
+           ON CONFLICT (user_id, (subscription->>'endpoint')) DO NOTHING`,
+          [userId, subscription]
+        );
+
+        // Envia uma notificação de "bem-vindo" para confirmar que funcionou
+        const payload = JSON.stringify({
+            title: 'Lembretes Ativados!',
+            body: 'Tudo certo! Você será notificado quando for a hora de renovar seu CAC.'
+        });
+        await webpush.sendNotification(subscription, payload);
+
+        res.status(201).json({ message: 'Inscrição salva com sucesso.' });
+    } catch (error) {
+        console.error("Erro ao salvar inscrição ou enviar push de confirmação:", error);
+        // Mesmo que o push de confirmação falhe, a inscrição pode ter sido salva.
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Erro ao processar a inscrição.' });
+        }
+    }
+});
+
+
+// <-- CORREÇÃO 2: INÍCIO - Rota /meu/painel completamente reescrita
+app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
+    // 1. Pega os dados do usuário (como antes)
+    const { rows: userRows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
+    if (userRows.length === 0) {
+        return res.redirect('/login');
+    }
+    const r = userRows[0];
+
+    // 2. NOVO: Verifica no banco se ESTE usuário já tem inscrição
+    const { rows: subscriptionRows } = await pool.query(
+        'SELECT id FROM push_subscriptions WHERE user_id = $1 LIMIT 1',
+        [req.vol.volunteer_id]
+    );
+    const isAlreadySubscribed = subscriptionRows.length > 0;
+
+    const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
+    const exp = r.expires_at ? dayjs(r.expires_at).format('DD/MM/YYYY') : '-';
+    
+    const notificationSectionHtml = process.env.VAPID_PUBLIC_KEY ? `
+        <div class="mt-6 p-4 bg-gray-100 rounded-lg border">
+          <h3 class="font-semibold mb-2">Lembretes no Navegador</h3>
+          <p class="text-sm mb-3">Clique no botão para ativar as notificações e ser lembrado de renovar seu CAC diretamente no seu dispositivo.</p>
+          <button id="subscribe-button" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm hover:bg-green-700 disabled:bg-gray-400">Ativar Notificações</button>
+          <p id="push-status" class="text-xs mt-2"></p>
+        </div>
+    ` : '';
+
+    const updateFormHtml = (r.status === 'apto' || r.status === 'em_revisao')
+        ? `<div class="mt-6 pt-6 border-t">
         <h3 class="font-semibold mb-2">Atualizar dados</h3>
         <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
           <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2" value="${r.email || ''}"/></div>
@@ -766,15 +873,93 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
           <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
         </form>
       </div>`
-    : `<div class="mt-6 pt-6 border-t">
+        : `<div class="mt-6 pt-6 border-t">
           <h3 class="font-semibold mb-2">Atualização Bloqueada</h3>
           <div class="text-sm text-amber-800 bg-amber-100 p-4 rounded-lg">
             <p>Seu cadastro foi marcado como <strong>${badge(r.status, r.cac_result)}</strong> pela administração.</p>
             <p class="mt-2">Para fazer alterações ou enviar um novo documento, por favor, entre em contato com a liderança do ministério.</p>
           </div>
         </div>`;
+    
+    // 3. ALTERADO: O script agora recebe a informação 'isAlreadySubscribed' do servidor
+    const pushScripts = `
+      <script>
+        const VAPID_PUBLIC_KEY = '${process.env.VAPID_PUBLIC_KEY}';
+        const subscribeButton = document.getElementById('subscribe-button');
+        const statusEl = document.getElementById('push-status');
+        const isAlreadySubscribedOnServer = ${isAlreadySubscribed}; // <-- USA A VARIÁVEL DO SERVIDOR
 
-  res.send(page('Meu Painel', `
+        function urlBase64ToUint8Array(base64String) {
+          const padding = '='.repeat((4 - base64String.length % 4) % 4);
+          const base64 = (base64String + padding).replace(/\\-/g, '+').replace(/_/g, '/');
+          const rawData = window.atob(base64);
+          const outputArray = new Uint8Array(rawData.length);
+          for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+          }
+          return outputArray;
+        }
+
+        async function initializeUI() {
+            if (isAlreadySubscribedOnServer) {
+                console.log('Usuário já inscrito no servidor.');
+                subscribeButton.textContent = 'Notificações Ativadas';
+                subscribeButton.disabled = true;
+                statusEl.textContent = 'Você já está recebendo lembretes neste dispositivo ou em outro.';
+            } else {
+                subscribeButton.addEventListener('click', () => {
+                    subscribeButton.disabled = true;
+                    registerAndSubscribe();
+                });
+            }
+        }
+
+        async function registerAndSubscribe() {
+          if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            statusEl.textContent = 'Push não é suportado neste navegador.';
+            subscribeButton.disabled = true;
+            return;
+          }
+
+          try {
+            const registration = await navigator.serviceWorker.register('/service-worker.js');
+            console.log('Service Worker Registrado:', registration);
+            
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
+
+            console.log('Nova inscrição:', subscription);
+
+            await fetch('/meu/save-subscription', {
+              method: 'POST',
+              body: JSON.stringify(subscription),
+              headers: { 'Content-Type': 'application/json' },
+            });
+            
+            subscribeButton.textContent = 'Notificações Ativadas!';
+            subscribeButton.disabled = true;
+            statusEl.textContent = 'Tudo pronto! Você receberá uma notificação de teste em breve.';
+
+          } catch (error) {
+            console.error('Falha ao se inscrever no push:', error);
+            subscribeButton.disabled = false;
+            if (Notification.permission === 'denied') {
+              statusEl.textContent = 'Você bloqueou as notificações. Altere nas configurações do navegador.';
+            } else {
+              statusEl.textContent = 'Falha ao ativar notificações.';
+            }
+          }
+        }
+        
+        if (subscribeButton) {
+            initializeUI();
+        }
+      </script>
+    `;
+
+    res.send(page('Meu Painel', `
     <div class="max-w-2xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-2">Olá, ${r.nome}</h2>
       <p class="text-sm mb-4">Status: ${badge(r.status, r.cac_result)}</p>
@@ -791,148 +976,153 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
       
       ${r.pdf_path ? `<p><a href="/meu/ver-pdf" target="_blank" class="text-sm link-brand underline">Visualizar CAC enviado</a></p>` : ''}
       
+      ${notificationSectionHtml}
+
       ${updateFormHtml}
 
       <p class="mt-6 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
     </div>
-  `));
+  `, pushScripts));
 });
+// <-- CORREÇÃO 2: FIM
 
+// ... (O conteúdo das rotas /meu/ver-pdf, /logout, /meu/atualizar, etc., foi omitido para encurtar, mas está igual ao seu)
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
-  try {
-    const id = req.vol.volunteer_id;
-    const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
-    if (!rows.length || !rows[0].pdf_path) {
-      return res.status(404).send('PDF não encontrado.');
+    try {
+        const id = req.vol.volunteer_id;
+        const { rows } = await pool.query('SELECT pdf_path FROM cadastros WHERE id=$1', [id]);
+        if (!rows.length || !rows[0].pdf_path) {
+            return res.status(404).send('PDF não encontrado.');
+        }
+        const key = rows[0].pdf_path;
+        const { data, error } = await supabase.storage.from(process.env.SUPABASE_BUCKET).download(key);
+        if (error) throw error;
+        const buffer = Buffer.from(await data.arrayBuffer());
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Length', buffer.length);
+        res.send(buffer);
+    } catch (e) {
+        console.error('Erro ao buscar PDF do usuário no Supabase:', e);
+        res.status(500).send('Erro ao carregar o arquivo.');
     }
-    const key = rows[0].pdf_path;
-    const { data, error } = await supabase.storage.from(process.env.SUPABASE_BUCKET).download(key);
-    if (error) throw error;
-    const buffer = Buffer.from(await data.arrayBuffer());
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', buffer.length);
-    res.send(buffer);
-  } catch (e) {
-    console.error('Erro ao buscar PDF do usuário no Supabase:', e);
-    res.status(500).send('Erro ao carregar o arquivo.');
-  }
 });
 
-app.get('/logout', (req,res)=>{  
-  clearAllSessions(res);  
-  res.redirect('/login');  
+app.get('/logout', (req, res) => {
+    clearAllSessions(res);
+    res.redirect('/login');
 });
 
 app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (req, res, next) => {
-  try {
-    const id = req.vol.volunteer_id;
-    const { rows: currentUserRows } = await pool.query('SELECT cpf, pdf_path, status FROM cadastros WHERE id = $1', [id]);
-    if (currentUserRows.length === 0) {
-      return res.status(404).send(page('Erro', '<p>Usuário não encontrado.</p>'));
-    }
-    const currentUser = currentUserRows[0];
-    const currentStatus = currentUser.status;
-    const oldPdfPath = currentUser.pdf_path;
-    const cpfClean = currentUser.cpf;
-
-    if (currentStatus === 'inapto' || currentStatus === 'atencao') {
-      return res.status(403).send(page('Atualização Bloqueada', '<p class="text-red-600 font-semibold">Sua conta está com um status que não permite atualizações automáticas. Por favor, entre em contato com a administração.</p>'));
-    }
-
-    if (req.body.consent !== 'on') return res.status(400).send(page('Erro', '<p>Você precisa confirmar o termo de consentimento.</p>'));
-
-    const updates = [];
-    const params = [];
-    let idx = 1;
-
-    if (req.body.email) { 
-      updates.push(`email=$${idx++}`); 
-      params.push(req.body.email.trim().toLowerCase()); 
-    }
-
-    if (req.body.rede) {
-      updates.push(`rede = $${idx++}`);
-      params.push(req.body.rede);
-    }
-    
-    if (req.body.telefone) {
-      const telefoneClean = (req.body.telefone || '').replace(/\D/g, '');
-      updates.push(`telefone = $${idx++}`);
-      params.push(telefoneClean);
-    }
-
-    if (req.body.nome_coordenador) {
-      updates.push(`nome_coordenador = $${idx++}`);
-      params.push(req.body.nome_coordenador.trim());
-    }
-
-    if (req.file) {
-      if (req.file.mimetype !== 'application/pdf') return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
-      
-      const pdfBuffer = req.file.buffer;
-      const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
-      
-      if (!pdf_cpf) {
-        return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O novo documento enviado não contém um CPF. Por favor, emita e envie uma Certidão que inclua seu CPF.</p>'));
-      }
-      if (pdf_cpf !== cpfClean) {
-        return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF no novo documento não corresponde ao seu CPF cadastrado. Por favor, envie o seu próprio documento.</p>'));
-      }
-
-      const key = `cac/${Date.now()}_${cert_number || 'sem-numero'}.pdf`;
-      const { error: uploadError } = await supabase.storage.from(process.env.SUPABASE_BUCKET).upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-      if (uploadError) throw uploadError;
-
-      const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
-      updates.push(`cert_number=$${idx++}`); params.push(cert_number);
-      updates.push(`issued_at=$${idx++}`); params.push((issued_at && issued_at.isValid()) ? issued_at.toISOString() : null);
-      updates.push(`expires_at=$${idx++}`); params.push((expires_at && expires_at.isValid()) ? expires_at.toISOString() : null);
-      updates.push(`pdf_path=$${idx++}`); params.push(key);
-      updates.push(`pdf_sha256=$${idx++}`); params.push(pdf_sha256);
-      updates.push(`cac_result=$${idx++}`); params.push(cac_result);
-
-      let newStatus = 'em_revisao';
-      if (issued_at && expires_at && issued_at.isValid()) {
-        const now = dayjs();
-        if (now.isAfter(expires_at)) {
-          newStatus = 'inapto';
-        } else if (cac_result === 'nada_consta') {
-          if (expires_at.diff(now, 'day') <= 15) {
-            newStatus = 'atencao';
-          } else {
-            newStatus = 'apto';
-          }
+    try {
+        const id = req.vol.volunteer_id;
+        const { rows: currentUserRows } = await pool.query('SELECT cpf, pdf_path, status FROM cadastros WHERE id = $1', [id]);
+        if (currentUserRows.length === 0) {
+            return res.status(404).send(page('Erro', '<p>Usuário não encontrado.</p>'));
         }
-      }
-      updates.push(`status=$${idx++}`); params.push(newStatus);
+        const currentUser = currentUserRows[0];
+        const currentStatus = currentUser.status;
+        const oldPdfPath = currentUser.pdf_path;
+        const cpfClean = currentUser.cpf;
+
+        if (currentStatus === 'inapto' || currentStatus === 'atencao') {
+            return res.status(403).send(page('Atualização Bloqueada', '<p class="text-red-600 font-semibold">Sua conta está com um status que não permite atualizações automáticas. Por favor, entre em contato com a administração.</p>'));
+        }
+
+        if (req.body.consent !== 'on') return res.status(400).send(page('Erro', '<p>Você precisa confirmar o termo de consentimento.</p>'));
+
+        const updates = [];
+        const params = [];
+        let idx = 1;
+
+        if (req.body.email) {
+            updates.push(`email=$${idx++}`);
+            params.push(req.body.email.trim().toLowerCase());
+        }
+
+        if (req.body.rede) {
+            updates.push(`rede = $${idx++}`);
+            params.push(req.body.rede);
+        }
+
+        if (req.body.telefone) {
+            const telefoneClean = (req.body.telefone || '').replace(/\D/g, '');
+            updates.push(`telefone = $${idx++}`);
+            params.push(telefoneClean);
+        }
+
+        if (req.body.nome_coordenador) {
+            updates.push(`nome_coordenador = $${idx++}`);
+            params.push(req.body.nome_coordenador.trim());
+        }
+
+        if (req.file) {
+            if (req.file.mimetype !== 'application/pdf') return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
+
+            const pdfBuffer = req.file.buffer;
+            const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
+
+            if (!pdf_cpf) {
+                return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O novo documento enviado não contém um CPF. Por favor, emita e envie uma Certidão que inclua seu CPF.</p>'));
+            }
+            if (pdf_cpf !== cpfClean) {
+                return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF no novo documento não corresponde ao seu CPF cadastrado. Por favor, envie o seu próprio documento.</p>'));
+            }
+
+            const key = `cac/${Date.now()}_${cert_number || 'sem-numero'}.pdf`;
+            const { error: uploadError } = await supabase.storage.from(process.env.SUPABASE_BUCKET).upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+            if (uploadError) throw uploadError;
+
+            const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
+            updates.push(`cert_number=$${idx++}`); params.push(cert_number);
+            updates.push(`issued_at=$${idx++}`); params.push((issued_at && issued_at.isValid()) ? issued_at.toISOString() : null);
+            updates.push(`expires_at=$${idx++}`); params.push((expires_at && expires_at.isValid()) ? expires_at.toISOString() : null);
+            updates.push(`pdf_path=$${idx++}`); params.push(key);
+            updates.push(`pdf_sha256=$${idx++}`); params.push(pdf_sha256);
+            updates.push(`cac_result=$${idx++}`); params.push(cac_result);
+
+            let newStatus = 'em_revisao';
+            if (issued_at && expires_at && issued_at.isValid()) {
+                const now = dayjs();
+                if (now.isAfter(expires_at)) {
+                    newStatus = 'inapto';
+                } else if (cac_result === 'nada_consta') {
+                    if (expires_at.diff(now, 'day') <= 15) {
+                        newStatus = 'atencao';
+                    } else {
+                        newStatus = 'apto';
+                    }
+                }
+            }
+            updates.push(`status=$${idx++}`); params.push(newStatus);
+        }
+
+        updates.push(`consent_signed_at=NOW()`);
+        updates.push(`updated_at=NOW()`);
+
+        params.push(id);
+        const q = `UPDATE cadastros SET ${updates.join(', ')} WHERE id=$${idx} RETURNING id`;
+        await pool.query(q, params);
+
+        if (req.file && oldPdfPath) {
+            try {
+                await supabase.storage.from(process.env.SUPABASE_BUCKET).remove([oldPdfPath]);
+            } catch (removeError) {
+                console.error("Erro ao deletar PDF antigo, mas o cadastro foi atualizado:", removeError);
+            }
+        }
+
+        res.redirect('/meu/painel');
+    } catch (e) {
+        next(e);
     }
-
-    updates.push(`consent_signed_at=NOW()`);
-    updates.push(`updated_at=NOW()`);
-
-    params.push(id);
-    const q = `UPDATE cadastros SET ${updates.join(', ')} WHERE id=$${idx} RETURNING id`;
-    await pool.query(q, params);
-    
-    if (req.file && oldPdfPath) {
-      try {
-        await supabase.storage.from(process.env.SUPABASE_BUCKET).remove([oldPdfPath]);
-      } catch (removeError) {
-        console.error("Erro ao deletar PDF antigo, mas o cadastro foi atualizado:", removeError);
-      }
-    }
-
-    res.redirect('/meu/painel');
-  } catch (e) {
-    next(e);
-  }
 });
 
 // =====================
 // Reset de senha voluntário
 // =====================
-app.get('/forgot', setNoCacheHeaders, (_req,res)=> {
-  res.send(page('Esqueci minha senha', `
+// ... (O conteúdo do reset foi omitido para encurtar, mas está igual ao seu)
+app.get('/forgot', setNoCacheHeaders, (_req, res) => {
+    res.send(page('Esqueci minha senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-3">Recuperar senha</h2>
       <p class="text-sm mb-4">Digite o e-mail associado à sua conta e enviaremos um link para redefinir sua senha.</p>
@@ -944,33 +1134,35 @@ app.get('/forgot', setNoCacheHeaders, (_req,res)=> {
   `));
 });
 
-app.post('/forgot', async (req,res)=> {
-  const email = (req.body.email||'').trim().toLowerCase();
-  const { rows } = await pool.query('SELECT id FROM cadastros WHERE email=$1 LIMIT 1', [email]);
-  if (!rows.length) return res.send(page('OK', '<p>Se existir conta com este e-mail, enviaremos um link para recuperação de senha.</p>'));
+app.post('/forgot', async (req, res) => {
+    const email = (req.body.email || '').trim().toLowerCase();
+    const { rows } = await pool.query('SELECT id FROM cadastros WHERE email=$1 LIMIT 1', [email]);
+    if (!rows.length) return res.send(page('OK', '<p>Se existir conta com este e-mail, enviaremos um link para recuperação de senha.</p>'));
 
-  const token = crypto.randomBytes(24).toString('hex');
-  await pool.query('UPDATE cadastros SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
-  
-  const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
-  const link = `${baseUrl}/reset?token=${token}`;
+    const token = crypto.randomBytes(24).toString('hex');
+    await pool.query('UPDATE cadastros SET reset_token=$1, reset_expires=NOW()+INTERVAL \'1 day\' WHERE id=$2', [token, rows[0].id]);
 
-  if (transporter) {
-    try {
-      await transporter.sendMail({ from: process.env.MAIL_FROM || 'no-reply@example.com', to: email,
-        subject: 'Redefinição de senha', html: `Clique aqui para redefinir sua senha: <a href="${link}">${link}</a>` });
-    } catch (mailError) {
-        console.error("Erro ao enviar e-mail de recuperação:", mailError);
+    const baseUrl = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+    const link = `${baseUrl}/reset?token=${token}`;
+
+    if (transporter) {
+        try {
+            await transporter.sendMail({
+                from: process.env.MAIL_FROM || 'no-reply@example.com', to: email,
+                subject: 'Redefinição de senha', html: `Clique aqui para redefinir sua senha: <a href="${link}">${link}</a>`
+            });
+        } catch (mailError) {
+            console.error("Erro ao enviar e-mail de recuperação:", mailError);
+        }
     }
-  }
 
-  res.send(page('OK', `<p>Se existir uma conta com o e-mail informado, um link para recuperação de senha foi enviado. Por favor, verifique sua caixa de entrada e spam.</p>`));
+    res.send(page('OK', `<p>Se existir uma conta com o e-mail informado, um link para recuperação de senha foi enviado. Por favor, verifique sua caixa de entrada e spam.</p>`));
 });
 
-app.get('/reset', async (req,res)=> {
-  const { rows } = await pool.query('SELECT id FROM cadastros WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [req.query.token]);
-  if (!rows.length) return res.send(page('Reset', '<p>Link inválido ou expirado.</p>'));
-  res.send(page('Definir nova senha', `
+app.get('/reset', async (req, res) => {
+    const { rows } = await pool.query('SELECT id FROM cadastros WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [req.query.token]);
+    if (!rows.length) return res.send(page('Reset', '<p>Link inválido ou expirado.</p>'));
+    res.send(page('Definir nova senha', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-3">Definir Nova Senha</h2>
       <form method="post" action="/reset?token=${req.query.token}" class="space-y-3">
@@ -990,22 +1182,24 @@ app.get('/reset', async (req,res)=> {
   `));
 });
 
-app.post('/reset', async (req,res)=> {
-  const token = req.query.token;
-  const { rows } = await pool.query('SELECT id FROM cadastros WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [token]);
-  if (!rows.length) return res.send(page('Reset', '<p>Link inválido ou expirado.</p>'));
-  const hash = await bcrypt.hash(req.body.password || '', 10);
-  await pool.query('UPDATE cadastros SET password_hash=$1, reset_token=NULL, reset_expires=NULL WHERE id=$2', [hash, rows[0].id]);
-  res.send(page('OK', '<p>Senha atualizada com sucesso. <a href="/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
+app.post('/reset', async (req, res) => {
+    const token = req.query.token;
+    const { rows } = await pool.query('SELECT id FROM cadastros WHERE reset_token=$1 AND reset_expires>NOW() LIMIT 1', [token]);
+    if (!rows.length) return res.send(page('Reset', '<p>Link inválido ou expirado.</p>'));
+    const hash = await bcrypt.hash(req.body.password || '', 10);
+    await pool.query('UPDATE cadastros SET password_hash=$1, reset_token=NULL, reset_expires=NULL WHERE id=$2', [hash, rows[0].id]);
+    res.send(page('OK', '<p>Senha atualizada com sucesso. <a href="/login" class="link-brand underline">Clique aqui para entrar</a>.</p>'));
 });
+
 
 // =====================
 // Admin
 // =====================
+// ... (O conteúdo do admin foi omitido para encurtar, mas está igual ao seu)
 app.get('/admin/login', setNoCacheHeaders, (_req, res) => {
-  clearAllSessions(res);
+    clearAllSessions(res);
 
-  res.send(adminPage('Login Admin', `
+    res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Acesso do administrador</h2>
       <form method="post" action="/admin/login" class="space-y-3">
@@ -1504,29 +1698,30 @@ app.get('/admin/admins', requireSuper, setNoCacheHeaders, async (req,res)=>{
     }
   });
 
+
 // =====================
 // Heartbeat de atividade (renova sessão a cada interação)
 // =====================
 app.post('/auth/ping', (req, res) => {
-  const kind = (req.body && req.body.kind) || 'public';
-  if (kind === 'admin') {
-    const t = req.cookies['admin_session'];
-    const data = verifyToken(t);
-    if (data && !isIdle(data)) {
-      const { name, token } = refreshActivityCookie('admin', data);
-      res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+    const kind = (req.body && req.body.kind) || 'public';
+    if (kind === 'admin') {
+        const t = req.cookies['admin_session'];
+        const data = verifyToken(t);
+        if (data && !isIdle(data)) {
+            const { name, token } = refreshActivityCookie('admin', data);
+            res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+        }
+    } else if (kind === 'vol') {
+        const t = req.cookies['vol_session'];
+        const data = verifyToken(t);
+        if (data && !isIdle(data)) {
+            const { name, token } = refreshActivityCookie('vol', data);
+            res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
+        }
     }
-  } else if (kind === 'vol') {
-    const t = req.cookies['vol_session'];
-    const data = verifyToken(t);
-    if (data && !isIdle(data)) {
-      const { name, token } = refreshActivityCookie('vol', data);
-      res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
-    }
-  }
-  // sempre no-store
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.json({ ok: true });
+    // sempre no-store
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.json({ ok: true });
 });
 
 // =====================
@@ -1534,125 +1729,119 @@ app.post('/auth/ping', (req, res) => {
 // =====================
 
 app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
-  // 1. Segurança: Verifica se a chave do cron job está correta
-  if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) {
-    return res.status(401).send('Unauthorized');
-  }
+    // 1. Segurança: Verifica se a chave do cron job está correta
+    if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) {
+        return res.status(401).send('Unauthorized');
+    }
 
-  try {
-    let emailsSent = 0;
-    let usersFlagged = 0;
-    const reminderDays = [15, 7, 1]; // Envia lembretes 15, 7 e 1 dia antes
+    try {
+        let emailsSent = 0;
+        let pushSent = 0;
+        let usersFlagged = 0;
+        const reminderDays = [15, 7, 1]; // Envia lembretes 15, 7 e 1 dia antes
 
-    for (const day of reminderDays) {
-      // ===== INÍCIO DA ALTERAÇÃO (SUA SUGESTÃO) =====
-      const { rows: usersToRemind } = await pool.query(
-        `SELECT id, nome, email, issued_at FROM cadastros 
+        for (const day of reminderDays) {
+            const { rows: usersToRemind } = await pool.query(
+                `SELECT id, nome, email, issued_at FROM cadastros 
          WHERE status = 'apto' AND (issued_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date`
-      );
-      // ===== FIM DA ALTERAÇÃO =====
+            );
 
-      for (const user of usersToRemind) {
-        const subject = 'Lembrete de Atualização do seu Cadastro no Atitude Kids';
-        // ===== INÍCIO DA ALTERAÇÃO (SUA SUGESTÃO) =====
-        const dueDate = dayjs(user.issued_at).add(6, 'months').format('DD/MM/YYYY');
-        // ===== FIM DA ALTERAÇÃO =====
-        const htmlBody = `
-          <p>Olá, ${user.nome}!</p>
-          <p>Esperamos que esta mensagem o encontre bem.</p>
-          <p>Para continuarmos em conformidade com as boas práticas de segurança e com a legislação vigente, nosso ministério realiza a renovação da Certidão de Antecedentes Criminais (CAC) de todos os servos a cada 6 meses.</p>
-          <p>A data de emissão do seu último documento completará 6 meses em <strong>${dueDate}</strong>. Para nos ajudar a manter seu cadastro atualizado, por favor, acesse seu painel em nosso site e envie uma certidão recém-emitida.</p>
-          <p><a href="${process.env.APP_BASE_URL || ''}/login">Acessar meu painel</a></p>
-          <p>Agradecemos imensamente seu tempo, seu serviço e seu cuidado contínuo com a segurança de nossas crianças.</p>
-          <p>Um abraço,<br>Liderança Atitude Kids</p>
-        `;
-        
-        await sendEmail(user.email, subject, htmlBody);
-        emailsSent++;
-      }
+            for (const user of usersToRemind) {
+                const subject = `Lembrete: Atualize seu CAC no Atitude Kids em ${day} dia(s)`;
+                const dueDate = dayjs(user.issued_at).add(6, 'months').format('DD/MM/YYYY');
+                const htmlBody = `<p>Olá, ${user.nome}!</p><p>Sua Certidão de Antecedentes Criminais vencerá em <strong>${dueDate}</strong>. Por favor, acesse seu painel para enviar uma nova.</p><p><a href="${process.env.APP_BASE_URL || ''}/login">Acessar meu painel</a></p>`;
+                
+                // Enviar e-mail
+                await sendEmail(user.email, subject, htmlBody);
+                emailsSent++;
+
+                // Enviar notificação push
+                await sendPushNotification(user.id, {
+                    title: subject,
+                    body: `Sua certidão vencerá em ${dueDate}. Clique para atualizar.`
+                });
+                pushSent++;
+            }
+        }
+
+        const { rows: usersToFlag } = await pool.query(
+            `SELECT id FROM cadastros WHERE status = 'apto' AND expires_at <= NOW()`
+        );
+
+        if (usersToFlag.length > 0) {
+            const idsToFlag = usersToFlag.map(u => u.id);
+            await pool.query(
+                `UPDATE cadastros SET status = 'atencao' WHERE id = ANY($1::int[])`,
+                [idsToFlag]
+            );
+            usersFlagged = idsToFlag.length;
+        }
+
+        res.json({
+            ok: true,
+            message: `Rotina de lembretes executada.`,
+            emailsSent,
+            pushSent,
+            usersFlagged,
+        });
+
+    } catch (e) {
+        console.error('Erro na rotina de lembretes de renovação:', e);
+        res.status(500).send('Erro ao executar a rotina de lembretes.');
     }
-
-    // Rotina para marcar usuários como "Atenção" se o prazo de 6 meses passou
-    // ===== INÍCIO DA ALTERAÇÃO (SUA SUGESTÃO) =====
-    const { rows: usersToFlag } = await pool.query(
-      `SELECT id FROM cadastros WHERE status = 'apto' AND (issued_at + INTERVAL '6 months')::date <= NOW()::date`
-    );
-    // ===== FIM DA ALTERAÇÃO =====
-
-    if (usersToFlag.length > 0) {
-      const idsToFlag = usersToFlag.map(u => u.id);
-      await pool.query(
-        `UPDATE cadastros SET status = 'atencao' WHERE id = ANY($1::int[])`,
-        [idsToFlag]
-      );
-      usersFlagged = idsToFlag.length;
-    }
-
-    res.json({ 
-      ok: true, 
-      message: `Rotina de lembretes executada.`,
-      emailsSent,
-      usersFlagged,
-    });
-
-  } catch (e) {
-    console.error('Erro na rotina de lembretes de renovação:', e);
-    res.status(500).send('Erro ao executar a rotina de lembretes.');
-  }
 });
 
 app.post('/cron/housekeeping', async (req, res) => {
-  if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) return res.status(401).send('unauthorized');
-  try {
-    const { rows } = await pool.query(`SELECT id, pdf_path FROM cadastros WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '180 days'`);
-    if (rows.length > 0) {
-      const pathsToDelete = rows.map(r => r.pdf_path).filter(Boolean);
-      if (pathsToDelete.length > 0) {
-        await supabase.storage.from(process.env.SUPABASE_BUCKET).remove(pathsToDelete);
-      }
+    if ((req.headers['x-cron-key'] || '') !== (process.env.CRON_KEY || '')) return res.status(401).send('unauthorized');
+    try {
+        const { rows } = await pool.query(`SELECT id, pdf_path FROM cadastros WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '180 days'`);
+        if (rows.length > 0) {
+            const pathsToDelete = rows.map(r => r.pdf_path).filter(Boolean);
+            if (pathsToDelete.length > 0) {
+                await supabase.storage.from(process.env.SUPABASE_BUCKET).remove(pathsToDelete);
+            }
+        }
+        await pool.query(`DELETE FROM cadastros WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '180 days'`);
+        res.send(`Limpou ${rows.length} registros antigos.`);
+    } catch (e) {
+        console.error(e);
+        res.status(500).send('erro housekeeping');
     }
-    await pool.query(`DELETE FROM cadastros WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '180 days'`);
-    res.send(`Limpou ${rows.length} registros antigos.`);
-  } catch (e) {
-    console.error(e);
-    res.status(500).send('erro housekeeping');
-  }
 });
 
 // =====================
 // Erros
 // =====================
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).send(page('Erro no Upload', '<p class="text-red-600 font-semibold">O arquivo enviado é muito grande. O tamanho máximo permitido é de 2MB.</p>'));
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).send(page('Erro no Upload', '<p class="text-red-600 font-semibold">O arquivo enviado é muito grande. O tamanho máximo permitido é de 2MB.</p>'));
+        }
+        return res.status(400).send(page('Erro no Upload', `<p>Ocorreu um erro durante o upload do arquivo: ${err.message}</p>`));
     }
-    return res.status(400).send(page('Erro no Upload', `<p>Ocorreu um erro durante o upload do arquivo: ${err.message}</p>`));
-  }
 
-  console.error(err);
-  res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado no servidor. Por favor, tente novamente.</p>'));
+    console.error(err);
+    res.status(500).send(page('Erro', '<p>Ocorreu um erro inesperado no servidor. Por favor, tente novamente.</p>'));
 });
 
 // ======================
 // Start server
 // ======================
 const startServer = async () => {
-  try {
-    console.log('Testando conexão com o banco de dados...');
-    const client = await pool.connect();
-    console.log('✅ Conexão com o banco de dados bem-sucedida.');
-    client.release();
+    try {
+        console.log('Testando conexão com o banco de dados...');
+        const client = await pool.connect();
+        console.log('✅ Conexão com o banco de dados bem-sucedida.');
+        client.release();
 
-    app.listen(process.env.PORT || 3000, () => {
-      console.log(`🚀 Servidor on-line na porta ${process.env.PORT || 3000}`);
-    });
+        app.listen(process.env.PORT || 3000, () => {
+            console.log(`🚀 Servidor on-line na porta ${process.env.PORT || 3000}`);
+        });
 
-  } catch (error) {
-    console.error('❌ Não foi possível conectar ao banco de dados ao iniciar.', error);
-    // Em um ambiente de produção, é melhor sair se o DB não estiver disponível.
-    process.exit(1); 
-  }
+    } catch (error) {
+        console.error('❌ Não foi possível conectar ao banco de dados ao iniciar.', error);
+        process.exit(1);
+    }
 };
 
 startServer();
