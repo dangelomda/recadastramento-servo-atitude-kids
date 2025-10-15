@@ -469,6 +469,10 @@ ${extraScripts}
 </body>
 </html>`;
 
+// ##################################################################################################
+// ######################### INÍCIO DA SEÇÃO DE ADMIN CORRIGIDA #####################################
+// ##################################################################################################
+
 const adminPage = (title, bodyHtml, admin = null) => {
     const navLinksDesktop = admin && admin.email
       ? `
@@ -478,6 +482,9 @@ const adminPage = (title, bodyHtml, admin = null) => {
         </div>
       `
       : `
+        <a href="/" class="hover:text-brand">Início</a>
+        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+        <a href="/login" class="hover:text-brand">Login</a>
         <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
       `;
 
@@ -487,6 +494,9 @@ const adminPage = (title, bodyHtml, admin = null) => {
         <a href="/admin/logout" class="block text-center py-3 text-sm border-t hover:bg-slate-100 link-brand">Sair</a>
       `
       : `
+        <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
+        <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+        <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
         <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
       `;
 
