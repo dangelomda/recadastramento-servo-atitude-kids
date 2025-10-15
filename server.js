@@ -28,7 +28,7 @@ const BRAND = {
 };
 
 // Sessão/atividade
-const MAX_IDLE_MS = 10 * 60 * 1000;
+const MAX_IDLE_MS = 10 * 60 * 1000; // 10 minutos
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
 // =====================
@@ -37,26 +37,16 @@ const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const app = express();
 
 
-// ##################################################################################
-// ######################### INÍCIO DA CORREÇÃO DE CACHE ############################
-// ##################################################################################
-
-// Arquivos estáticos: servidos sem cache para evitar problemas de atualização
 app.use('/public', express.static(path.join(__dirname, 'public'), {
   etag: false, lastModified: false, maxAge: 0
 }));
 app.use('/favicon.svg', express.static(path.join(__dirname, 'public', 'favicon.svg')));
 
-// Service worker: servido sempre sem cache e com o tipo MIME (Content-Type) correto
 app.get('/service-worker.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private, max-age=0');
   res.sendFile(path.resolve(__dirname, 'public', 'service-worker.js'));
 });
-
-// ################################################################################
-// ######################### FIM DA CORREÇÃO DE CACHE #############################
-// ################################################################################
 
 
 // Infra
@@ -230,7 +220,7 @@ function requireAdmin(req, res, next) {
     }
     if (isIdle(data)) {
         clearAllSessions(res);
-        return res.redirect('/admin/login');
+        return res.redirect('/admin/login?timeout=1');
     }
     const { name, token } = refreshActivityCookie('admin', data);
     res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
@@ -246,7 +236,7 @@ function requireSuper(req, res, next) {
     }
     if (isIdle(d)) {
         clearAllSessions(res);
-        return res.redirect('/admin/login');
+        return res.redirect('/admin/login?timeout=1');
     }
     const { name, token } = refreshActivityCookie('admin', d);
     res.cookie(name, token, { httpOnly: true, sameSite: 'lax', secure: true });
@@ -488,9 +478,6 @@ const adminPage = (title, bodyHtml, admin = null) => {
         </div>
       `
       : `
-        <a href="/" class="hover:text-brand">Início</a>
-        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
-        <a href="/login" class="hover:text-brand">Login</a>
         <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
       `;
 
@@ -500,11 +487,37 @@ const adminPage = (title, bodyHtml, admin = null) => {
         <a href="/admin/logout" class="block text-center py-3 text-sm border-t hover:bg-slate-100 link-brand">Sair</a>
       `
       : `
-        <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
-        <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
-        <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
         <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
       `;
+
+    // SCRIPT DE LOGOUT POR INATIVIDADE
+    const idleLogoutScript = admin && admin.email ? `
+    <script>
+    (() => {
+      const IDLE_MS = ${MAX_IDLE_MS};
+      const PING_MS = 30 * 1000;      // Checa a cada 30 segundos
+      const LOGOUT_URL = '/admin/logout?timeout=1';
+      const KEY = 'admin_last_activity_ts';
+      
+      const markActivity = () => localStorage.setItem(KEY, String(Date.now()));
+
+      ['mousemove','mousedown','keydown','scroll','touchstart','focus'].forEach(evt => window.addEventListener(evt, markActivity, {passive:true}));
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) markActivity();
+      });
+
+      if (!localStorage.getItem(KEY)) markActivity();
+
+      setInterval(() => {
+        const last = Number(localStorage.getItem(KEY) || 0);
+        if (Date.now() - last > IDLE_MS) {
+          localStorage.removeItem(KEY);
+          location.replace(LOGOUT_URL);
+        }
+      }, PING_MS);
+    })();
+    </script>
+    ` : '';
 
     return `<!doctype html>
     <html lang="pt-BR">
@@ -570,6 +583,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
 
       ${activityHeartbeatScript('admin')}
     </script>
+    ${idleLogoutScript}
     </body>
     </html>`;
 };
@@ -781,25 +795,55 @@ app.post('/login', async (req, res) => {
     res.redirect('/meu/painel');
 });
 
-
 // =====================
 // Painel do voluntário
 // =====================
 
+app.post('/meu/check-subscription', requireVolunteer, async (req, res) => {
+    try {
+        const { endpoint } = req.body || {};
+        const userId = req.vol.volunteer_id;
+
+        if (!endpoint) {
+            return res.json({ browserHasSubscription: false, userIsSubscribed: false });
+        }
+
+        const { rows } = await pool.query(
+            'SELECT id FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2',
+            [endpoint, userId]
+        );
+
+        res.json({
+            browserHasSubscription: true,
+            userIsSubscribed: rows.length > 0,
+        });
+    } catch (e) {
+        console.error("Erro ao checar inscrição:", e);
+        res.status(500).json({ error: 'Erro ao checar inscrição.' });
+    }
+});
+
 app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
     try {
         const subscription = req.body;
+        const endpoint = subscription ? subscription.endpoint : null;
         const userId = req.vol.volunteer_id;
         
-        if (!subscription || !subscription.endpoint) {
+        if (!subscription || !endpoint) {
             return res.status(400).json({ error: 'Objeto de inscrição inválido.' });
         }
 
-        await pool.query(
-          `INSERT INTO push_subscriptions (user_id, subscription) VALUES ($1, $2)
-           ON CONFLICT (user_id, (subscription->>'endpoint')) DO NOTHING`,
-          [userId, subscription]
-        );
+        const query = `
+            INSERT INTO push_subscriptions (user_id, subscription, endpoint, created_at, updated_at)
+            VALUES ($1, $2, $3, NOW(), NOW())
+            ON CONFLICT (endpoint) 
+            DO UPDATE SET 
+                user_id = EXCLUDED.user_id,
+                subscription = EXCLUDED.subscription,
+                updated_at = NOW();
+        `;
+        
+        await pool.query(query, [userId, subscription, endpoint]);
 
         const payload = JSON.stringify({
             title: 'Lembretes Ativados!',
@@ -809,7 +853,7 @@ app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
 
         res.status(201).json({ message: 'Inscrição salva com sucesso.' });
     } catch (error) {
-        console.error("Erro ao salvar inscrição ou enviar push de confirmação:", error);
+        console.error("Erro ao salvar inscrição (upsert):", error);
         if (!res.headersSent) {
             res.status(500).json({ error: 'Erro ao processar a inscrição.' });
         }
@@ -829,12 +873,12 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     const notificationSectionHtml = process.env.VAPID_PUBLIC_KEY ? `
         <div class="mt-6 p-4 bg-gray-100 rounded-lg border">
           <h3 class="font-semibold mb-2">Lembretes no Navegador</h3>
-          <p class="text-sm mb-3">Clique no botão para ativar as notificações e ser lembrado de renovar seu CAC diretamente no seu dispositivo.</p>
+          <p class="text-sm mb-3">Ative as notificações para ser lembrado de renovar seu CAC diretamente no seu dispositivo.</p>
           <button id="subscribe-button" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm hover:bg-green-700 disabled:bg-gray-400">Ativar Notificações</button>
           
           <div class="mt-2">
             <button id="btn-reinstalar-push" class="text-xs text-slate-600 underline hover:text-brand" type="button">
-              Problemas com a notificação? Clique aqui para reinstalar.
+              Problemas com a notificação? Clique aqui para forçar a reinstalação.
             </button>
           </div>
           <p id="push-status" class="text-xs mt-2 text-slate-600"></p>
@@ -875,11 +919,9 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     const pushScripts = `
       <script>
       (() => {
-        // Assegura que o script só roda se o HTML de notificação existir
-        const notificationContainer = document.querySelector('#subscribe-button');
+        const notificationContainer = document.getElementById('subscribe-button');
         if (!notificationContainer) return;
 
-        const SW_URL = '/service-worker.js';
         const PUBLIC_VAPID = '${process.env.VAPID_PUBLIC_KEY}';
         const btnAtivar = document.getElementById('subscribe-button');
         const btnReinstalar = document.getElementById('btn-reinstalar-push');
@@ -892,6 +934,12 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
                 btnAtivar.disabled = true;
             }
         };
+        const marcarDesativado = () => {
+             if (btnAtivar) {
+                btnAtivar.textContent = 'Ativar Notificações';
+                btnAtivar.disabled = false;
+            }
+        }
 
         function urlBase64ToUint8Array(base64String) {
             const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -908,7 +956,6 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
                 await Promise.all(regs.map(r => r.unregister()));
                 const keys = await caches.keys();
                 await Promise.all(keys.map(k => caches.delete(k)));
-                console.log('Cache e SWs antigos limpos.');
             } catch (e) {
                 console.warn('Falha ao limpar SW/cache:', e);
             }
@@ -916,25 +963,26 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
 
         async function registrarSW() {
             if (!('serviceWorker' in navigator)) throw new Error('Service Worker não é suportado');
-            const reg = await navigator.serviceWorker.register(SW_URL);
+            const reg = await navigator.serviceWorker.register('/service-worker.js');
             await navigator.serviceWorker.ready;
             return reg;
         }
 
         async function assinarPush(reg) {
             if (!('PushManager' in window)) throw new Error('Push não é suportado');
-            
+            if (Notification.permission === 'denied') throw new Error('Permissão de notificações está negada no navegador');
+
             let sub = await reg.pushManager.getSubscription();
-            if (sub) return sub; // Já está inscrito
-
-            if (Notification.permission === 'denied') {
-                throw new Error('Permissão de notificações está negada no navegador');
+            if (!sub) {
+                if (Notification.permission === 'default') {
+                    const perm = await Notification.requestPermission();
+                    if (perm !== 'granted') throw new Error('Permissão não concedida');
+                }
+                sub = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID)
+                });
             }
-
-            sub = await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID)
-            });
 
             const resp = await fetch('/meu/save-subscription', {
                 method: 'POST',
@@ -942,16 +990,15 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
                 body: JSON.stringify(sub)
             });
             if (!resp.ok) {
-                // Tenta cancelar a inscrição no navegador se o servidor falhar
-                await sub.unsubscribe();
+                await sub.unsubscribe().catch(e => console.error("Falha ao cancelar inscrição após erro do servidor", e));
                 throw new Error('Falha ao salvar assinatura no servidor');
             }
             return sub;
         }
-
+        
         async function reinstalar() {
             try {
-                setStatus('Reinstalando notificações…');
+                setStatus('Reinstalando, por favor aguarde…');
                 if(btnAtivar) btnAtivar.disabled = true;
                 if(btnReinstalar) btnReinstalar.disabled = true;
 
@@ -959,25 +1006,28 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
                 const reg = await registrarSW();
                 await assinarPush(reg);
                 
-                setStatus('Notificações ativadas com sucesso!');
+                setStatus('Notificações ativadas com sucesso neste dispositivo!');
                 marcarAtivado();
             } catch (e) {
-                console.error(e);
+                console.error('Erro na reinstalação:', e);
                 setStatus('Erro: ' + (e?.message || e));
+                marcarDesativado();
             } finally {
                 if(btnReinstalar) btnReinstalar.disabled = false;
             }
         }
-
+        
         async function ativar() {
-            try {
-                setStatus('Ativando notificações…');
+             try {
+                setStatus('Ativando...');
+                if(btnAtivar) btnAtivar.disabled = true;
                 const reg = await registrarSW();
                 await assinarPush(reg);
                 setStatus('Notificações ativadas com sucesso!');
                 marcarAtivado();
             } catch (e) {
-                console.warn('Ativação normal falhou, tentando auto-reparo:', e);
+                console.warn('Ativação normal falhou:', e);
+                setStatus('Erro ao ativar: ' + (e?.message || e) + '. Tentando reinstalar...');
                 await reinstalar();
             }
         }
@@ -986,22 +1036,31 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
             try {
                 const reg = await navigator.serviceWorker.getRegistration();
                 const sub = reg ? await reg.pushManager.getSubscription() : null;
+                const endpoint = sub ? sub.endpoint : null;
 
-                if (reg && sub) {
-                    setStatus('Lembretes ativados para este dispositivo.');
+                const checkResp = await fetch('/meu/check-subscription', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ endpoint })
+                });
+                
+                if(!checkResp.ok) throw new Error('Falha na comunicação com o servidor');
+                const status = await checkResp.json();
+
+                if (status.browserHasSubscription && status.userIsSubscribed) {
+                    setStatus('Lembretes já ativados para você neste dispositivo.');
                     marcarAtivado();
                 } else {
-                    setStatus('Lembretes não estão ativos neste navegador.');
-                    if(btnAtivar) btnAtivar.disabled = false;
+                    setStatus('Lembretes não estão ativos para você neste navegador.');
+                    marcarDesativado();
                 }
             } catch(e) {
-                console.error("Erro na inicialização", e);
+                console.error("Erro na inicialização da checagem:", e);
                 setStatus('Não foi possível verificar o status das notificações.');
                 if(btnAtivar) btnAtivar.disabled = true;
             }
         }
 
-        // --- Ponto de Entrada ---
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
             setStatus('Notificações Push não são suportadas neste navegador.');
             if(btnAtivar) btnAtivar.disabled = true;
@@ -1010,7 +1069,6 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
             if (btnAtivar) btnAtivar.addEventListener('click', ativar);
             if (btnReinstalar) btnReinstalar.addEventListener('click', reinstalar);
             
-            // Inicia a verificação do estado atual
             window.addEventListener('load', initialize);
         }
       })();
@@ -1246,11 +1304,16 @@ app.post('/reset', async (req, res) => {
 // =====================
 // Admin
 // =====================
-app.get('/admin/login', setNoCacheHeaders, (_req, res) => {
+app.get('/admin/login', setNoCacheHeaders, (req, res) => {
     clearAllSessions(res);
+    const timeoutMessage = req.query.timeout === '1'
+      ? '<div class="mb-4 p-3 bg-yellow-100 text-yellow-800 text-sm rounded-lg">Sua sessão expirou por inatividade. Por favor, faça o login novamente.</div>'
+      : '';
+      
     res.send(adminPage('Login Admin', `
     <div class="max-w-sm mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-xl font-semibold mb-4">Acesso do administrador</h2>
+      ${timeoutMessage}
       <form method="post" action="/admin/login" class="space-y-3">
         <div><label class="block text-sm">E-mail</label><input name="email" class="w-full border rounded px-3 py-2" required/></div>
         <div>
