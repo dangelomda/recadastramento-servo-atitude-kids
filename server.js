@@ -644,8 +644,13 @@ app.get('/termo-lgpd', (_req, res) => {
 // =====================
 // Cadastro de voluntário
 // =====================
+
+// ##################################################################################################
+// ######################### INÍCIO DA CORREÇÃO DO MODAL DE TERMOS ##################################
+// ##################################################################################################
+
 app.get('/cadastro', (_req, res) => {
-    res.type('html').send(page('Cadastro', `
+    const bodyHtml = `
     <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-4">Crie sua conta</h2>
       <form method="post" action="/cadastro" enctype="multipart/form-data">
@@ -682,13 +687,72 @@ app.get('/cadastro', (_req, res) => {
             </div>
           </div>
           <div><label class="block text-sm mb-1">CAC (PDF até 2MB)</label><input type="file" name="cac_pdf" accept="application/pdf" required class="w-full"/></div>
-          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Li e aceito o <a href="/termo-lgpd" target="_blank" class="link-brand underline">termo de consentimento</a>.</label></div>
+          <div class="flex items-start gap-2">
+            <input type="checkbox" name="consent" required class="mt-1" id="consent-checkbox">
+            <label class="text-sm">Li e aceito o <button type="button" id="show-terms-btn" class="link-brand underline">termo de consentimento</button>.</label>
+          </div>
           <button type="submit" class="btn-brand px-5 py-2.5 rounded w-full">Cadastrar</button>
         </div>
       </form>
     </div>
-  `));
+
+    <div id="terms-modal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 hidden z-50">
+      <div class="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+        <h2 class="text-xl font-semibold mb-4">Termo de Consentimento e Privacidade</h2>
+        <p>Autorizo a ${ORG} a utilizar minha CAC exclusivamente para avaliação de aptidão ao ministério infantil (Kids), conforme LGPD.</p>
+        <ul class="list-disc ml-6 mt-3 space-y-1 text-sm">
+          <li>Acesso restrito e armazenamento seguro;</li>
+          <li>Sem compartilhamento com terceiros;</li>
+          <li>Guarda apenas durante a participação;</li>
+          <li>Posso solicitar acesso/retificação/eliminação a qualquer momento.</li>
+        </ul>
+        <div class="mt-6 flex justify-end gap-3">
+           <button type="button" id="close-modal-btn" class="text-sm px-4 py-2 border rounded text-gray-600 hover:bg-gray-100">Fechar</button>
+           <button type="button" id="accept-terms-btn" class="text-sm btn-brand px-4 py-2 rounded">Li e Aceito</button>
+        </div>
+      </div>
+    </div>
+    `;
+
+    const extraScripts = `
+    <script>
+      const showTermsBtn = document.getElementById('show-terms-btn');
+      const termsModal = document.getElementById('terms-modal');
+      const acceptTermsBtn = document.getElementById('accept-terms-btn');
+      const closeModalBtn = document.getElementById('close-modal-btn');
+      const consentCheckbox = document.getElementById('consent-checkbox');
+
+      if (showTermsBtn && termsModal && acceptTermsBtn && closeModalBtn && consentCheckbox) {
+        showTermsBtn.addEventListener('click', () => {
+          termsModal.classList.remove('hidden');
+        });
+
+        acceptTermsBtn.addEventListener('click', () => {
+          consentCheckbox.checked = true;
+          termsModal.classList.add('hidden');
+        });
+
+        closeModalBtn.addEventListener('click', () => {
+          termsModal.classList.add('hidden');
+        });
+
+        // Opcional: Fechar clicando fora do modal (na área escura)
+        termsModal.addEventListener('click', (event) => {
+          if (event.target === termsModal) {
+            termsModal.classList.add('hidden');
+          }
+        });
+      }
+    </script>
+    `;
+
+    res.type('html').send(page('Cadastro', bodyHtml, extraScripts));
 });
+
+// ################################################################################################
+// ######################### FIM DA CORREÇÃO DO MODAL DE TERMOS ###################################
+// ################################################################################################
+
 
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
     try {
@@ -914,7 +978,7 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
             </select>
           </div>
           <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
-          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" class="link-brand underline" target="_blank">termo de consentimento</a>.</label></div>
+          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" target="_blank" class="link-brand underline">termo de consentimento</a>.</label></div>
           <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
         </form>
       </div>`
