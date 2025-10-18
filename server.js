@@ -469,10 +469,6 @@ ${extraScripts}
 </body>
 </html>`;
 
-// ##################################################################################################
-// ######################### INÍCIO DA SEÇÃO DE ADMIN CORRIGIDA #####################################
-// ##################################################################################################
-
 const adminPage = (title, bodyHtml, admin = null) => {
     const navLinksDesktop = admin && admin.email
       ? `
@@ -627,6 +623,8 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/termo-lgpd', (_req, res) => {
+    // Esta rota agora é menos necessária, mas pode ser mantida para acesso direto se desejado.
+    // O conteúdo principal agora está no modal.
     res.type('html').send(page('Termo LGPD', `
     <div class="max-w-2xl mx-auto">
       <h2 class="text-2xl font-semibold mb-4">Termo de Consentimento e Privacidade</h2>
@@ -646,10 +644,11 @@ app.get('/termo-lgpd', (_req, res) => {
 // =====================
 
 // ##################################################################################################
-// ######################### INÍCIO DA CORREÇÃO DO MODAL DE TERMOS ##################################
+// ######################### INÍCIO DA CORREÇÃO DO MODAL DE TERMOS (CADASTRO) #######################
 // ##################################################################################################
 
 app.get('/cadastro', (_req, res) => {
+    // Corpo HTML da página de cadastro, incluindo o formulário e o modal oculto
     const bodyHtml = `
     <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-4">Crie sua conta</h2>
@@ -687,10 +686,12 @@ app.get('/cadastro', (_req, res) => {
             </div>
           </div>
           <div><label class="block text-sm mb-1">CAC (PDF até 2MB)</label><input type="file" name="cac_pdf" accept="application/pdf" required class="w-full"/></div>
+          
           <div class="flex items-start gap-2">
             <input type="checkbox" name="consent" required class="mt-1" id="consent-checkbox">
             <label class="text-sm">Li e aceito o <button type="button" id="show-terms-btn" class="link-brand underline">termo de consentimento</button>.</label>
           </div>
+          
           <button type="submit" class="btn-brand px-5 py-2.5 rounded w-full">Cadastrar</button>
         </div>
       </form>
@@ -714,6 +715,7 @@ app.get('/cadastro', (_req, res) => {
     </div>
     `;
 
+    // JavaScript para controlar o modal
     const extraScripts = `
     <script>
       const showTermsBtn = document.getElementById('show-terms-btn');
@@ -746,11 +748,12 @@ app.get('/cadastro', (_req, res) => {
     </script>
     `;
 
+    // Renderiza a página com o corpo HTML e o JavaScript extra
     res.type('html').send(page('Cadastro', bodyHtml, extraScripts));
 });
 
 // ################################################################################################
-// ######################### FIM DA CORREÇÃO DO MODAL DE TERMOS ###################################
+// ######################### FIM DA CORREÇÃO DO MODAL DE TERMOS (CADASTRO) ########################
 // ################################################################################################
 
 
@@ -869,6 +872,7 @@ app.post('/login', async (req, res) => {
     res.redirect('/meu/painel');
 });
 
+
 // =====================
 // Painel do voluntário
 // =====================
@@ -934,6 +938,10 @@ app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
     }
 });
 
+// ##################################################################################################
+// ######################### INÍCIO DA CORREÇÃO DO MODAL DE TERMOS (PAINEL) #########################
+// ##################################################################################################
+
 app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
     const { rows: userRows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
     if (userRows.length === 0) {
@@ -978,7 +986,12 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
             </select>
           </div>
           <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
-          <div class="flex items-start gap-2"><input type="checkbox" name="consent" required class="mt-1"><label class="text-sm">Confirmo novamente o <a href="/termo-lgpd" target="_blank" class="link-brand underline">termo de consentimento</a>.</label></div>
+          
+          <div class="flex items-start gap-2">
+            <input type="checkbox" name="consent" required class="mt-1" id="consent-checkbox-panel">
+            <label class="text-sm">Confirmo novamente o <button type="button" id="show-terms-btn-panel" class="link-brand underline">termo de consentimento</button>.</label>
+          </div>
+
           <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
         </form>
       </div>`
@@ -990,8 +1003,30 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
           </div>
         </div>`;
     
-    const pushScripts = `
+    // HTML do modal para a página do painel
+    const termsModalHtmlPanel = `
+    <div id="terms-modal-panel" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 hidden z-50">
+      <div class="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+        <h2 class="text-xl font-semibold mb-4">Termo de Consentimento e Privacidade</h2>
+        <p>Autorizo a ${ORG} a utilizar minha CAC exclusivamente para avaliação de aptidão ao ministério infantil (Kids), conforme LGPD.</p>
+        <ul class="list-disc ml-6 mt-3 space-y-1 text-sm">
+          <li>Acesso restrito e armazenamento seguro;</li>
+          <li>Sem compartilhamento com terceiros;</li>
+          <li>Guarda apenas durante a participação;</li>
+          <li>Posso solicitar acesso/retificação/eliminação a qualquer momento.</li>
+        </ul>
+        <div class="mt-6 flex justify-end gap-3">
+           <button type="button" id="close-modal-btn-panel" class="text-sm px-4 py-2 border rounded text-gray-600 hover:bg-gray-100">Fechar</button>
+           <button type="button" id="accept-terms-btn-panel" class="text-sm btn-brand px-4 py-2 rounded">Li e Aceito</button>
+        </div>
+      </div>
+    </div>
+    `;
+
+    // Combina o script de push com o script do modal do painel
+    const combinedScripts = `
       <script>
+      // Script original de Push Notifications (com checagem de usuário)
       (() => {
         const notificationContainer = document.getElementById('subscribe-button');
         if (!notificationContainer) return;
@@ -1146,10 +1181,41 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
             window.addEventListener('load', initialize);
         }
       })();
+
+      // Script para o Modal de Termos do Painel
+      (() => {
+        const showTermsBtnPanel = document.getElementById('show-terms-btn-panel');
+        const termsModalPanel = document.getElementById('terms-modal-panel');
+        const acceptTermsBtnPanel = document.getElementById('accept-terms-btn-panel');
+        const closeModalBtnPanel = document.getElementById('close-modal-btn-panel');
+        const consentCheckboxPanel = document.getElementById('consent-checkbox-panel');
+
+        if (showTermsBtnPanel && termsModalPanel && acceptTermsBtnPanel && closeModalBtnPanel && consentCheckboxPanel) {
+            showTermsBtnPanel.addEventListener('click', () => {
+                termsModalPanel.classList.remove('hidden');
+            });
+
+            acceptTermsBtnPanel.addEventListener('click', () => {
+                consentCheckboxPanel.checked = true;
+                termsModalPanel.classList.add('hidden');
+            });
+
+            closeModalBtnPanel.addEventListener('click', () => {
+                termsModalPanel.classList.add('hidden');
+            });
+
+            termsModalPanel.addEventListener('click', (event) => {
+                if (event.target === termsModalPanel) {
+                termsModalPanel.classList.add('hidden');
+                }
+            });
+        }
+      })();
       </script>
     `;
 
-    res.send(page('Meu Painel', `
+    // Corpo HTML principal da página do painel
+    const bodyHtmlPanel = `
     <div class="max-w-2xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-2">Olá, ${r.nome}</h2>
       <p class="text-sm mb-4">Status: ${badge(r.status, r.cac_result)}</p>
@@ -1172,8 +1238,15 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
 
       <p class="mt-6 text-sm"><a href="/logout" class="link-brand underline">Sair</a></p>
     </div>
-  `, pushScripts));
+    ${termsModalHtmlPanel} 
+    `; // Adiciona o HTML do modal ao final do corpo
+
+    res.send(page('Meu Painel', bodyHtmlPanel, combinedScripts)); // Passa os scripts combinados
 });
+
+// ################################################################################################
+// ######################### FIM DA CORREÇÃO DO MODAL DE TERMOS (PAINEL) ##########################
+// ################################################################################################
 
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
     try {
