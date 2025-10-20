@@ -642,11 +642,6 @@ app.get('/termo-lgpd', (_req, res) => {
 // =====================
 // Cadastro de voluntário
 // =====================
-
-// ##################################################################################################
-// ######################### INÍCIO DA CORREÇÃO DO MODAL DE TERMOS (CADASTRO) #######################
-// ##################################################################################################
-
 app.get('/cadastro', (_req, res) => {
     // Corpo HTML da página de cadastro, incluindo o formulário e o modal oculto
     const bodyHtml = `
@@ -751,11 +746,6 @@ app.get('/cadastro', (_req, res) => {
     // Renderiza a página com o corpo HTML e o JavaScript extra
     res.type('html').send(page('Cadastro', bodyHtml, extraScripts));
 });
-
-// ################################################################################################
-// ######################### FIM DA CORREÇÃO DO MODAL DE TERMOS (CADASTRO) ########################
-// ################################################################################################
-
 
 app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
     try {
@@ -872,7 +862,6 @@ app.post('/login', async (req, res) => {
     res.redirect('/meu/painel');
 });
 
-
 // =====================
 // Painel do voluntário
 // =====================
@@ -967,6 +956,7 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         </div>
     ` : '';
 
+    // Modificação no formulário de atualização para incluir o botão do modal
     const updateFormHtml = (r.status === 'apto' || r.status === 'em_revisao')
         ? `<div class="mt-6 pt-6 border-t">
         <h3 class="font-semibold mb-2">Atualizar dados</h3>
@@ -1190,6 +1180,7 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         const closeModalBtnPanel = document.getElementById('close-modal-btn-panel');
         const consentCheckboxPanel = document.getElementById('consent-checkbox-panel');
 
+        // Só executa se os elementos existirem (quando o formulário de update estiver visível)
         if (showTermsBtnPanel && termsModalPanel && acceptTermsBtnPanel && closeModalBtnPanel && consentCheckboxPanel) {
             showTermsBtnPanel.addEventListener('click', () => {
                 termsModalPanel.classList.remove('hidden');
@@ -1206,7 +1197,7 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
 
             termsModalPanel.addEventListener('click', (event) => {
                 if (event.target === termsModalPanel) {
-                termsModalPanel.classList.add('hidden');
+                   termsModalPanel.classList.add('hidden');
                 }
             });
         }
@@ -1583,8 +1574,10 @@ app.post('/admin/reset', async (req, res, next) => {
 
 app.get('/admin/logout', (req, res) => {
   clearAllSessions(res);
-  res.redirect('/admin/login');
+  // Redireciona para login, o parâmetro timeout=1 é opcional se não for usado no front-end
+  res.redirect('/admin/login?timeout=1'); 
 });
+
 
 app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
   const adminData = verifyToken(req.cookies['admin_session']);
@@ -1686,8 +1679,12 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
     </form>
   `;
   
+  // Alteração: Mover o botão "Gerenciar Admins" para o topo
   res.send(adminPage('Painel Admin', `
-    <h2 class="text-2xl font-semibold mb-4">Cadastros</h2>
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-2xl font-semibold">Cadastros</h2>
+      <a href="/admin/admins" class="btn-brand px-4 py-2 rounded text-sm">Gerenciar Admins</a>
+    </div>
     ${filtersHtml}
     <div class="overflow-x-auto bg-white border rounded-xl mb-6">
       <table class="min-w-full text-sm">
@@ -1711,8 +1708,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
         <tbody>${tr || `<tr><td colspan="15" class="py-6 text-center text-slate-500">Sem registros</td></tr>`}</tbody>
       </table>
     </div>
-    <a href="/admin/admins" class="btn-brand px-4 py-2 rounded">Gerenciar Admins</a>
-  `, adminData));
+  `, adminData)); // Botão removido do final
 });
 
 app.post('/admin/update-status', requireAdmin, async (req, res) => {
