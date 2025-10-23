@@ -85,7 +85,7 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 150 }));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500 }));
 app.set('trust proxy', 1);
 
 // Upload
