@@ -311,7 +311,23 @@ async function extractFromPdf(pdfBuffer) {
     if (text.includes('NÃO CONSTA') || text.includes('NADA CONSTA')) {
         cac_result = 'nada_consta';
     }
-    return { cert_number, issued_at, expires_at, cac_result, pdf_cpf };
+
+    // ##################################################################
+    // ## INÍCIO DA ADIÇÃO: Extrair Data de Nascimento
+    // ##################################################################
+    let data_nascimento = null;
+    const nascMatch = text.match(/NASCIDO\(A\) AOS (\d{2}\/\d{2}\/\d{4})/);
+    if (nascMatch && nascMatch[1]) {
+        const parsedDate = dayjs(nascMatch[1], 'DD/MM/YYYY');
+        if (parsedDate.isValid()) {
+            data_nascimento = parsedDate;
+        }
+    }
+    // ##################################################################
+    // ## FIM DA ADIÇÃO
+    // ##################################################################
+
+    return { cert_number, issued_at, expires_at, cac_result, pdf_cpf, data_nascimento }; // <-- data_nascimento adicionada ao retorno
 }
 
 // =====================
@@ -525,6 +541,40 @@ const adminPage = (title, bodyHtml, admin = null) => {
     </script>
     ` : '';
 
+    // ##################################################################
+    // ## INÍCIO DA ADIÇÃO: HTML do Modal de Validação
+    // ##################################################################
+    const validationModalHtml = `
+    <div id="validar-modal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 hidden z-50">
+      <div class="bg-white rounded-lg p-6 max-w-lg w-full">
+        <h2 class="text-xl font-semibold mb-4">Validar Certidão na PF</h2>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Servo</label>
+            <div id="modal-servo-nome" class="mt-1 p-2 border rounded-md bg-gray-50"></div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Data de Nascimento (Copie e Cole)</label>
+            <div class="mt-1 flex rounded-md shadow-sm">
+              <input type="text" id="modal-data-nasc" readonly class="flex-1 block w-full rounded-none rounded-l-md p-2 border-gray-300 bg-gray-50">
+              <button type="button" id="modal-copy-btn" class="relative -ml-px inline-flex items-center space-x-2 rounded-r-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">
+                <span>Copiar</span>
+              </button>
+            </div>
+          </div>
+          <div class="pt-4 border-t mt-4 flex flex-col sm:flex-row gap-3">
+            <a href="#" id="modal-pf-link" target="_blank" class="btn-brand w-full text-center block px-5 py-3 rounded-lg">1. Abrir site da PF</a>
+            <button type="button" id="modal-close-btn" class="w-full text-center px-5 py-3 border rounded text-gray-600 hover:bg-gray-100">2. Fechar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    `;
+    // ##################################################################
+    // ## FIM DA ADIÇÃO: HTML do Modal de Validação
+    // ##################################################################
+
+
     return `<!doctype html>
     <html lang="pt-BR">
     <head>
@@ -556,6 +606,9 @@ const adminPage = (title, bodyHtml, admin = null) => {
     <main class="w-full px-4 sm:px-6 lg:px-8 py-8">
     ${bodyHtml}
     </main>
+    
+    ${validationModalHtml}
+
     <footer class="text-center text-xs text-slate-500 py-8">© ${new Date().getFullYear()} ${ORG}</footer>
 
     <script>
@@ -588,6 +641,83 @@ const adminPage = (title, bodyHtml, admin = null) => {
       });
 
       ${activityHeartbeatScript('admin')}
+
+      // ##################################################################
+      // ## INÍCIO DA ADIÇÃO: Script do Modal de Validação
+      // ##################################################################
+      (() => {
+        const modal = document.getElementById('validar-modal');
+        if (!modal) return;
+
+        const modalNome = document.getElementById('modal-servo-nome');
+        const modalDataInput = document.getElementById('modal-data-nasc');
+        const modalCopyBtn = document.getElementById('modal-copy-btn');
+        const modalPfLink = document.getElementById('modal-pf-link');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+        
+        const pfUrlBase = 'https://servicos.pf.gov.br/epol-sinic-publico/validar-cac/';
+
+        document.body.addEventListener('click', (e) => {
+          // Delegação de evento para os botões de validação
+          if (e.target && e.target.matches('.btn-validar-pf')) {
+            e.preventDefault();
+            
+            const btn = e.target;
+            const nome = btn.getAttribute('data-nome');
+            const cert = btn.getAttribute('data-cert');
+            const nasc = btn.getAttribute('data-nasc');
+
+            if (modalNome) modalNome.textContent = nome || 'N/A';
+            if (modalDataInput) modalDataInput.value = nasc || 'NÃO ENCONTRADA';
+            
+            if (modalDataInput && !nasc) {
+              modalDataInput.classList.add('text-red-600', 'font-bold');
+            } else if (modalDataInput) {
+              modalDataInput.classList.remove('text-red-600', 'font-bold');
+            }
+            
+            // ##################################################
+            // ## AQUI ESTÁ A CORREÇÃO
+            // ##################################################
+            if (modalPfLink) modalPfLink.href = pfUrlBase + (cert || '');
+            
+            if (modalCopyBtn) modalCopyBtn.textContent = 'Copiar';
+
+            modal.classList.remove('hidden');
+          }
+        });
+
+        if (modalCloseBtn) {
+          modalCloseBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
+          });
+        }
+        
+        // Fechar clicando fora
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) {
+            modal.classList.add('hidden');
+          }
+        });
+
+        if (modalCopyBtn && modalDataInput) {
+          modalCopyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(modalDataInput.value).then(() => {
+              modalCopyBtn.textContent = 'Copiado!';
+              setTimeout(() => { modalCopyBtn.textContent = 'Copiar'; }, 2000);
+            }).catch(err => {
+              console.error('Erro ao copiar:', err);
+              // Fallback para seleção manual
+              modalDataInput.select();
+              alert('Não foi possível copiar automaticamente. Por favor, copie manualmente (Ctrl+C).');
+            });
+          });
+        }
+      })();
+      // ##################################################################
+      // ## FIM DA ADIÇÃO: Script do Modal de Validação
+      // ##################################################################
+
     </script>
     ${idleLogoutScript}
     </body>
@@ -775,7 +905,13 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
         const password_hash = await bcrypt.hash(password, 10);
         const pdfBuffer = req.file.buffer;
 
-        const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
+        // ##################################################################
+        // ## INÍCIO DA ATUALIZAÇÃO: Capturar data_nascimento
+        // ##################################################################
+        const { cert_number, issued_at, expires_at, cac_result, pdf_cpf, data_nascimento } = await extractFromPdf(pdfBuffer);
+        // ##################################################################
+        // ## FIM DA ATUALIZAÇÃO
+        // ##################################################################
 
         if (!cert_number || !issued_at || !issued_at.isValid()) {
             return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
@@ -808,12 +944,19 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
             .upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
         if (uploadError) throw uploadError;
 
+        // ##################################################################
+        // ## INÍCIO DA ATUALIZAÇÃO: Adicionar data_nascimento ao INSERT
+        // ##################################################################
         const insert = `
       INSERT INTO cadastros
-      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede, telefone, nome_coordenador)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12, $13, $14) RETURNING id
+      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede, telefone, nome_coordenador, data_nascimento)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12, $13, $14, $15) RETURNING id
     `;
-        const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefoneClean, nome_coordenador.trim()];
+        const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefoneClean, nome_coordenador.trim(), (data_nascimento && data_nascimento.isValid()) ? data_nascimento.toISOString() : null];
+        // ##################################################################
+        // ## FIM DA ATUALIZAÇÃO
+        // ##################################################################
+
         const { rows } = await pool.query(insert, vals);
         const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
         res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
@@ -926,10 +1069,6 @@ app.post('/meu/save-subscription', requireVolunteer, async (req, res) => {
         }
     }
 });
-
-// ##################################################################################################
-// ######################### INÍCIO DA CORREÇÃO DO MODAL DE TERMOS (PAINEL) #########################
-// ##################################################################################################
 
 app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => {
     const { rows: userRows } = await pool.query('SELECT * FROM cadastros WHERE id=$1', [req.vol.volunteer_id]);
@@ -1235,10 +1374,6 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     res.send(page('Meu Painel', bodyHtmlPanel, combinedScripts)); // Passa os scripts combinados
 });
 
-// ################################################################################################
-// ######################### FIM DA CORREÇÃO DO MODAL DE TERMOS (PAINEL) ##########################
-// ################################################################################################
-
 app.get('/meu/ver-pdf', requireVolunteer, async (req, res) => {
     try {
         const id = req.vol.volunteer_id;
@@ -1311,7 +1446,14 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
             if (req.file.mimetype !== 'application/pdf') return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
 
             const pdfBuffer = req.file.buffer;
-            const { cert_number, issued_at, expires_at, cac_result, pdf_cpf } = await extractFromPdf(pdfBuffer);
+            
+            // ##################################################################
+            // ## INÍCIO DA ATUALIZAÇÃO: Capturar data_nascimento (no update)
+            // ##################################################################
+            const { cert_number, issued_at, expires_at, cac_result, pdf_cpf, data_nascimento } = await extractFromPdf(pdfBuffer);
+            // ##################################################################
+            // ## FIM DA ATUALIZAÇÃO
+            // ##################################################################
 
             if (!pdf_cpf) {
                 return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O novo documento enviado não contém um CPF. Por favor, emita e envie uma Certidão que inclua seu CPF.</p>'));
@@ -1331,6 +1473,14 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
             updates.push(`pdf_path=$${idx++}`); params.push(key);
             updates.push(`pdf_sha256=$${idx++}`); params.push(pdf_sha256);
             updates.push(`cac_result=$${idx++}`); params.push(cac_result);
+
+            // ##################################################################
+            // ## INÍCIO DA ATUALIZAÇÃO: Adicionar data_nascimento (no update)
+            // ##################################################################
+            updates.push(`data_nascimento=$${idx++}`); params.push((data_nascimento && data_nascimento.isValid()) ? data_nascimento.toISOString() : null);
+            // ##################################################################
+            // ## FIM DA ATUALIZAÇÃO
+            // ##################################################################
 
             let newStatus = 'em_revisao';
             if (issued_at && expires_at && issued_at.isValid()) {
@@ -1544,7 +1694,7 @@ app.get('/admin/reset', setNoCacheHeaders, async (req, res, next) => {
               <input name="password" type="password" required class="w-full border rounded px-3 py-2 pr-10"/>
               <span class="password-toggle-icon absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-500">
                 <svg class="eye-icon h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                <svg class="eye-slash-icon hidden h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+              <svg class="eye-slash-icon hidden h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
               </span>
             </div>
           </div>
@@ -1583,7 +1733,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
   const adminData = verifyToken(req.cookies['admin_session']);
   
   const { nome, email, status, rede } = req.query;
-  let query = 'SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path,rede,telefone,nome_coordenador FROM cadastros WHERE 1=1';
+  let query = 'SELECT id,nome,cpf,email,cert_number,issued_at,expires_at,status,cac_result,pdf_path,rede,telefone,nome_coordenador,data_nascimento FROM cadastros WHERE 1=1'; // <-- ADICIONADO data_nascimento
   const params = [];
 
   if (nome) {
@@ -1609,8 +1759,24 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
   const tr = rows.map(r=>{
     const issued = r.issued_at ? dayjs(r.issued_at).format('DD/MM/YYYY') : '-';
     const exp = r.expires_at ? dayjs(r.expires_at).format('DD/MM/YYYY') : '-';
-    const linkPf = r.cert_number ? `https://servicos.pf.gov.br/epol-sinic-publico/validar-cac?numero=${r.cert_number}` : '#';
-    const acaoValidar = r.cert_number ? `<a target="_blank" href="${linkPf}" class="link-brand underline">Validar na PF</a>` : '-';
+    
+    // ##################################################################
+    // ## INÍCIO DA ATUALIZAÇÃO: Link de validação (agora é um botão modal)
+    // ##################################################################
+    const dataNascFormatada = r.data_nascimento ? dayjs(r.data_nascimento).format('DD/MM/YYYY') : '';
+    const acaoValidar = r.cert_number
+      ? `<button type="button" 
+                 class="btn-validar-pf link-brand underline" 
+                 data-nome="${r.nome.replace(/"/g, '&quot;')}" 
+                 data-cert="${r.cert_number}" 
+                 data-nasc="${dataNascFormatada}">
+           Validar na PF
+         </button>`
+      : '-';
+    // ##################################################################
+    // ## FIM DA ATUALIZAÇÃO
+    // ##################################################################
+      
     const acaoVerPdf = r.pdf_path ? `<a target="_blank" href="/admin/ver-pdf/${r.id}" class="link-brand underline">Ver PDF</a>` : '-';
 
     const statusForm = `
@@ -1685,6 +1851,7 @@ app.get('/admin/painel', requireAdmin, setNoCacheHeaders, async (req,res)=>{
       <h2 class="text-2xl font-semibold">Cadastros</h2>
       <a href="/admin/admins" class="btn-brand px-4 py-2 rounded text-sm">Gerenciar Admins</a>
     </div>
+    
     ${filtersHtml}
     <div class="overflow-x-auto bg-white border rounded-xl mb-6">
       <table class="min-w-full text-sm">
