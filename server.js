@@ -677,7 +677,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
             }
             
             // ##################################################
-            // ## AQUI ESTÁ A CORREÇÃO
+            // ## AQUI ESTÁ A CORREÇÃO DO SYNTAXERROR
             // ##################################################
             if (modalPfLink) modalPfLink.href = pfUrlBase + (cert || '');
             
@@ -929,10 +929,10 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
         if (issued_at && expires_at) {
             const now = dayjs();
             if (now.isAfter(expires_at)) {
-                status = 'inapto';
+                status = 'em_revisao'; // <-- MUDANÇA AQUI (era 'inapto', mas 'em_revisao' é melhor no cadastro)
             } else if (cac_result === 'nada_consta') {
                 if (expires_at.diff(now, 'day') <= 15) {
-                    status = 'atencao';
+                    status = 'atencao'; // <-- Mantido 'atencao' para "quase vencendo"
                 } else {
                     status = 'apto';
                 }
@@ -1095,9 +1095,24 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
         </div>
     ` : '';
 
-    // Modificação no formulário de atualização para incluir o botão do modal
-    const updateFormHtml = (r.status === 'apto' || r.status === 'em_revisao')
-        ? `<div class="mt-6 pt-6 border-t">
+    // ##################################################################
+    // ## INÍCIO DA ALTERAÇÃO: Lógica de Aviso Amarelo (Conforme Pedido)
+    // ##################################################################
+    
+    let warningMessageHtml = ''; // Começa vazio
+    
+    // Checa se o status é 'em_revisao' E se o CAC está de fato expirado
+    if (r.status === 'em_revisao' && r.expires_at && dayjs().isAfter(dayjs(r.expires_at))) {
+        warningMessageHtml = `
+        <div class="mb-4 p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm">
+          <strong>Seu CAC precisa ser renovado.</strong>
+          <p class="mt-1">Notamos que sua Certidão de Antecedentes Criminais expirou. Por favor, emita um novo documento no site do Gov.br e envie o PDF abaixo para reativar seu cadastro.</p>
+        </div>
+        `;
+    }
+    
+    // O formulário de atualização (HTML puro)
+    const updateFormContent = `
         <h3 class="font-semibold mb-2">Atualizar dados</h3>
         <form method="post" action="/meu/atualizar" enctype="multipart/form-data" class="space-y-3">
           <div><label class="block text-sm">Novo e-mail (opcional)</label><input name="email" type="email" class="w-full border rounded px-3 py-2" value="${r.email || ''}"/></div>
@@ -1123,14 +1138,33 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
 
           <button type="submit" class="btn-brand px-4 py-2 rounded">Salvar</button>
         </form>
-      </div>`
-        : `<div class="mt-6 pt-6 border-t">
+    `;
+    
+    let updateFormHtml = '';
+    
+    // Define o que será mostrado
+    if (r.status === 'inapto' || r.status === 'atencao') {
+        // Se for 'inapto' ou 'atencao' (o antigo 'vencido'), bloqueia
+        updateFormHtml = `
+        <div class="mt-6 pt-6 border-t">
           <h3 class="font-semibold mb-2">Atualização Bloqueada</h3>
           <div class="text-sm text-amber-800 bg-amber-100 p-4 rounded-lg">
             <p>Seu cadastro foi marcado como <strong>${badge(r.status, r.cac_result)}</strong> pela administração.</p>
             <p class="mt-2">Para fazer alterações ou enviar um novo documento, por favor, entre em contato com a liderança do ministério.</p>
           </div>
         </div>`;
+    } else {
+        // Se for 'apto' OU 'em_revisao', mostra o formulário
+        updateFormHtml = `
+        <div class="mt-6 pt-6 border-t">
+          ${updateFormContent}
+        </div>`;
+    }
+    
+    // ##################################################################
+    // ## FIM DA ALTERAÇÃO
+    // ##################################################################
+    
     
     // HTML do modal para a página do painel
     const termsModalHtmlPanel = `
@@ -1349,6 +1383,9 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
     <div class="max-w-2xl mx-auto bg-white border rounded-xl p-6">
       <h2 class="text-2xl font-semibold mb-2">Olá, ${r.nome}</h2>
       <p class="text-sm mb-4">Status: ${badge(r.status, r.cac_result)}</p>
+      
+      ${warningMessageHtml} 
+      
       <ul class="text-sm space-y-1 mb-4">
         <li><strong>E-mail:</strong> ${r.email}</li>
         <li><strong>Telefone:</strong> ${formatPhone(r.telefone)}</li>
@@ -1411,9 +1448,19 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
         const oldPdfPath = currentUser.pdf_path;
         const cpfClean = currentUser.cpf;
 
+        // ##################################################################
+        // ## INÍCIO DA ALTERAÇÃO: Lógica de Bloqueio
+        // ##################################################################
+        
+        // Agora, 'em_revisao' é permitido, 'atencao' continua bloqueado
         if (currentStatus === 'inapto' || currentStatus === 'atencao') {
             return res.status(403).send(page('Atualização Bloqueada', '<p class="text-red-600 font-semibold">Sua conta está com um status que não permite atualizações automáticas. Por favor, entre em contato com a administração.</p>'));
         }
+        
+        // ##################################################################
+        // ## FIM DA ALTERAÇÃO
+        // ##################################################################
+
 
         if (req.body.consent !== 'on') return res.status(400).send(page('Erro', '<p>Você precisa confirmar o termo de consentimento.</p>'));
 
@@ -1486,7 +1533,7 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
             if (issued_at && expires_at && issued_at.isValid()) {
                 const now = dayjs();
                 if (now.isAfter(expires_at)) {
-                    newStatus = 'inapto';
+                    newStatus = 'em_revisao'; // <-- MUDANÇA AQUI (era 'inapto')
                 } else if (cac_result === 'nada_consta') {
                     if (expires_at.diff(now, 'day') <= 15) {
                         newStatus = 'atencao';
@@ -2197,10 +2244,20 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
 
         if (usersToFlag.length > 0) {
             const idsToFlag = usersToFlag.map(u => u.id);
+            
+            // ##################################################################
+            // ## INÍCIO DA ALTERAÇÃO: Mudar status para 'em_revisao'
+            // ##################################################################
+            
             await pool.query(
-                `UPDATE cadastros SET status = 'atencao' WHERE id = ANY($1::int[])`,
+                `UPDATE cadastros SET status = 'em_revisao' WHERE id = ANY($1::int[])`,
                 [idsToFlag]
             );
+            
+            // ##################################################################
+            // ## FIM DA ALTERAÇÃO
+            // ##################################################################
+            
             usersFlagged = idsToFlag.length;
         }
 
