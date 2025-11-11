@@ -276,6 +276,7 @@ async function extractFromPdf(pdfBuffer) {
     const text = (pdfData.text || '').toUpperCase().replace(/\s+/g, ' ');
     const numMatch = text.match(/N[º°:]\s*(\d{6,})/) || text.match(/CRIMINAIS N° (\d+)/);
     const datePatterns = [
+        /ASSINADO ELETRONICAMENTE POR.*EM (\d{2}\/\d{2}\/\d{4})/,
         /FOI EXPEDIDA EM (\d{2}\/\d{2}\/\d{4})/,
         /EXPEDIDA EM\s*(\d{2}\/\d{2}\/\d{4})/,
         /EMITIDA EM\s*(\d{2}\/\d{2}\/\d{4})/,
