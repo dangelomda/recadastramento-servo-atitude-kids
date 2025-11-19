@@ -918,6 +918,26 @@ app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
             return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
         }
 
+        // ##################################################################
+        // ## INÍCIO DA NOVA TRAVA: CAC > 90 DIAS
+        // ##################################################################
+        const diasDesdeEmissao = dayjs().diff(issued_at, 'day');
+        if (diasDesdeEmissao > 90) {
+            return res.status(400).send(page('Documento Antigo', `
+        <div class="bg-red-50 border-l-4 border-red-500 p-4">
+            <p class="font-bold text-red-700">Atenção: Este CAC é muito antigo.</p>
+            <p class="mt-2 text-sm text-red-800">Embora a validade interna seja de 6 meses, para realizarmos a <strong>validação de segurança na Polícia Federal</strong>, o documento precisa ter sido emitido há no máximo 90 dias.</p>
+            <p class="mt-2 text-sm text-red-800">Seu documento foi emitido em <strong>${issued_at.format('DD/MM/YYYY')}</strong> (${diasDesdeEmissao} dias atrás).</p>
+            <div class="mt-4">
+                <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="btn-brand px-4 py-2 rounded text-sm">Emitir CAC Novo no Gov.br</a>
+            </div>
+        </div>
+    `));
+        }
+        // ##################################################################
+        // ## FIM DA NOVA TRAVA
+        // ##################################################################
+
         if (!pdf_cpf) {
             return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O documento enviado não contém um número de CPF. Por favor, emita uma nova Certidão no site do Gov.br, garantindo que o CPF seja incluído.</p>'));
         }
@@ -1501,6 +1521,29 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
             const { cert_number, issued_at, expires_at, cac_result, pdf_cpf, data_nascimento } = await extractFromPdf(pdfBuffer);
             // ##################################################################
             // ## FIM DA ATUALIZAÇÃO
+            // ##################################################################
+
+            // ##################################################################
+            // ## INÍCIO DA NOVA TRAVA: CAC > 90 DIAS (UPDATE)
+            // ##################################################################
+            if (issued_at && issued_at.isValid()) {
+                const diasDesdeEmissao = dayjs().diff(issued_at, 'day');
+                if (diasDesdeEmissao > 90) {
+                    return res.status(400).send(page('Documento Antigo', `
+                <div class="bg-red-50 border-l-4 border-red-500 p-4">
+                    <p class="font-bold text-red-700">Não foi possível atualizar.</p>
+                    <p class="mt-2 text-sm text-red-800">Este CAC foi emitido há mais de 90 dias (em ${issued_at.format('DD/MM/YYYY')}).</p>
+                    <p class="mt-1 text-sm text-red-800">Para validar sua renovação, precisamos de um documento recente.</p>
+                    <div class="mt-4">
+                        <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="btn-brand px-4 py-2 rounded text-sm">Emitir CAC Novo no Gov.br</a>
+                        <a href="/meu/painel" class="ml-3 text-sm underline text-slate-600">Voltar</a>
+                    </div>
+                </div>
+            `));
+                }
+            }
+            // ##################################################################
+            // ## FIM DA NOVA TRAVA
             // ##################################################################
 
             if (!pdf_cpf) {
