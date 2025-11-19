@@ -2239,6 +2239,37 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
             }
         }
 
+        const { rows: expiredUsersNeedingReminder } = await pool.query(
+            `SELECT id, nome, email, expires_at
+             FROM cadastros
+             WHERE status = 'em_revisao'
+               AND expires_at IS NOT NULL
+               AND expires_at::date <= NOW()::date
+               AND ((NOW()::date - expires_at::date) % 7) = 0`
+        );
+
+        for (const expiredUser of expiredUsersNeedingReminder) {
+            const expiredDate = dayjs(expiredUser.expires_at).format('DD/MM/YYYY');
+
+            const weeklyHtml = `
+              <p>Olá, ${expiredUser.nome}!</p>
+              <p>Identificamos que a sua Certidão de Antecedentes Criminais venceu em <strong>${expiredDate}</strong> e ainda precisamos do novo documento para manter seu cadastro regularizado.</p>
+              <p>Por favor, acesse o painel do servo e envie uma certidão renovada para regularizar sua situação.</p>
+              <p><a href="${process.env.APP_BASE_URL || ''}/login">Acessar meu painel</a></p>
+              <p>Assim que recebermos o novo PDF, seu status volta ao normal automaticamente.</p>
+              <p>Obrigado pelo cuidado,<br>Liderança Atitude Kids</p>
+            `;
+
+            await sendEmail(expiredUser.email, 'CAC vencido - regularize seu cadastro', weeklyHtml);
+            emailsSent++;
+
+            await sendPushNotification(expiredUser.id, {
+                title: `CAC vencido - atualização pendente`,
+                body: `Seu documento venceu em ${expiredDate}. Envie um novo PDF para liberar seu cadastro.`
+            });
+            pushSent++;
+        }
+
         const { rows: usersToFlag } = await pool.query(
             `SELECT id FROM cadastros WHERE status = 'apto' AND expires_at <= NOW()`
         );
