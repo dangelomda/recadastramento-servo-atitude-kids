@@ -2254,7 +2254,7 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
     for (const day of reminderDays) {
       const { rows: usersToRemind } = await pool.query(
         `SELECT id, nome, email, issued_at FROM cadastros 
-         WHERE status = 'apto' AND (issued_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date`
+     WHERE (status = 'apto' OR status = 'em_revisao') AND (issued_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date`
       );
 
       for (const user of usersToRemind) {
