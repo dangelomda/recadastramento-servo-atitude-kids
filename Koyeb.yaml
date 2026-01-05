@@ -1,0 +1,108 @@
+services:
+  # --- 1. SEU APLICATIVO PRINCIPAL (WEB SERVICE) ---
+  - name: recadastramento-web
+    type: web
+    git:
+      repository: github.com/dangelomda/recadastramento-servo-atitude-kids.git
+      branch: main
+    docker:
+      file: ./Dockerfile
+    routes:
+      - path: /
+        port: 8000
+    instanceClass: eNano
+    env:
+      - key: APP_BASE_URL
+        value: "@(APP_BASE_URL)"
+      - key: BRAND_ACCENT
+        value: "@(BRAND_ACCENT)"
+      - key: BRAND_LOGO_PATH
+        value: "@(BRAND_LOGO_PATH)"
+      - key: BRAND_PRIMARY
+        value: "@(BRAND_PRIMARY)"
+      - key: CRON_KEY
+        value: "@(CRON_KEY)"
+      - key: DATABASE_URL
+        value: "@(DATABASE_URL)"
+      - key: MAIL_FROM
+        value: "@(MAIL_FROM)"
+      - key: ORG_NOME
+        value: "@(ORG_NOME)"
+      - key: SESSION_SECRET
+        value: "@(SESSION_SECRET)"
+      - key: SMTP_HOST
+        value: "@(SMTP_HOST)"
+      - key: SMTP_PASS
+        value: "@(SMTP_PASS)"
+      - key: SMTP_PORT
+        value: "@(SMTP_PORT)"
+      - key: SMTP_SECURE
+        value: "@(SMTP_SECURE)"
+      - key: SMTP_USER
+        value: "@(SMTP_USER)"
+      - key: SUPABASE_BUCKET
+        value: "@(SUPABASE_BUCKET)"
+      - key: SUPABASE_SERVICE_KEY
+        value: "@(SUPABASE_SERVICE_KEY)"
+      - key: SUPABASE_URL
+        value: "@(SUPABASE_URL)"
+      - key: SUPER_ADMIN_EMAIL
+        value: "@(SUPER_ADMIN_EMAIL)"
+      - key: SUPER_ADMIN_PASS
+        value: "@(SUPER_ADMIN_PASS)"
+
+  # --- 2. NOSSA TAREFA AGENDADA (CRON JOB) ---
+  - name: lembretes-renovacao
+    type: worker
+    git:
+      repository: github.com/dangelomda/recadastramento-servo-atitude-kids.git
+      branch: main
+    docker:
+      file: ./Dockerfile
+    cron:
+      schedule: "0 9 * * *" # Executa todo dia às 9h da manhã
+      endpoint: /cron/enviar-lembretes-renovacao
+      method: POST
+      headers:
+        - key: x-cron-key
+          value: "@(CRON_KEY)"
+    instanceClass: eNano
+    env:
+      - key: APP_BASE_URL
+        value: "@(APP_BASE_URL)"
+      - key: BRAND_ACCENT
+        value: "@(BRAND_ACCENT)"
+      - key: BRAND_LOGO_PATH
+        value: "@(BRAND_LOGO_PATH)"
+      - key: BRAND_PRIMARY
+        value: "@(BRAND_PRIMARY)"
+      - key: CRON_KEY
+        value: "@(CRON_KEY)"
+      - key: DATABASE_URL
+        value: "@(DATABASE_URL)"
+      - key: MAIL_FROM
+        value: "@(MAIL_FROM)"
+      - key: ORG_NOME
+        value: "@(ORG_NOME)"
+      - key: SESSION_SECRET
+        value: "@(SESSION_SECRET)"
+      - key: SMTP_HOST
+        value: "@(SMTP_HOST)"
+      - key: SMTP_PASS
+        value: "@(SMTP_PASS)"
+      - key: SMTP_PORT
+        value: "@(SMTP_PORT)"
+      - key: SMTP_SECURE
+        value: "@(SMTP_SECURE)"
+      - key: SMTP_USER
+        value: "@(SMTP_USER)"
+      - key: SUPABASE_BUCKET
+        value: "@(SUPABASE_BUCKET)"
+      - key: SUPABASE_SERVICE_KEY
+        value: "@(SUPABASE_SERVICE_KEY)"
+      - key: SUPABASE_URL
+        value: "@(SUPABASE_URL)"
+      - key: SUPER_ADMIN_EMAIL
+        value: "@(SUPER_ADMIN_EMAIL)"
+      - key: SUPER_ADMIN_PASS
+        value: "@(SUPER_ADMIN_PASS)"

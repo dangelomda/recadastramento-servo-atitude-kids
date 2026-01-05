@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS cadastros (...);
+CREATE TABLE IF NOT EXISTS admins (...);
