@@ -2320,6 +2320,63 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
       pushSent++;
     }
 
+    // ... (código anterior dos lembretes semanais)
+
+    // ##################################################################
+    // ## INÍCIO DA MELHORIA: Relatório Mensal para a Diretoria
+    // ##################################################################
+
+    // Verifica se hoje é o dia 1 do mês para enviar o relatório mensal
+    if (dayjs().date() === 1) {
+      const { rows: allExpired } = await pool.query(
+        `SELECT nome, email, expires_at 
+         FROM cadastros 
+         WHERE status = 'em_revisao' 
+           AND expires_at < NOW()
+         ORDER BY expires_at ASC`
+      );
+
+      if (allExpired.length > 0) {
+        const adminEmail = 'atitudekids@ibatitude.com.br';
+        const reportDate = dayjs().format('DD/MM/YYYY');
+
+        const listItems = allExpired.map(u => {
+          const vencto = u.expires_at ? dayjs(u.expires_at).format('DD/MM/YYYY') : 'Data desconhecida';
+          return `<li><strong>${u.nome}</strong> (${u.email}) - Vencido em: ${vencto}</li>`;
+        }).join('');
+
+        const adminHtmlBody = `
+          <div style="font-family: sans-serif; color: #333;">
+            <h2>Olá, Administração.</h2>
+            <p>Este é um envio automático do sistema.</p>
+            <p>Segue a relação das pessoas que já estão sendo notificadas toda semana, que estão com o CAC vencido e precisam regularizar a situação de portabilidade para o novo aplicativo EngageSuite.</p>
+            <p><strong>Será necessário verificar com os líderes para fazer o contato direto com a pessoa para que regularize sua situação.</strong></p>
+            <p><strong>Total de pendentes:</strong> ${allExpired.length}</p>
+            <ul style="padding-left: 20px;">
+              ${listItems}
+            </ul>
+            <p style="margin-top: 20px; font-style: italic; color: #555;">
+              "Gostaríamos de reforçar que nosso compromisso com a regularização vai além da organização: é um ato de zelo, proteção às nossas crianças e excelência no serviço a Deus. Lembremos sempre da Palavra:<br><br>
+              <strong>'E tudo quanto fizerdes, fazei-o de todo o coração, como ao Senhor, e não aos homens.'</strong> (Colossenses 3:23)<br><br>
+              Contamos com o apoio de todos para mantermos nossa equipe 100% regularizada."
+            </p>
+            <p><a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" 
+                  style="display:inline-block; padding:10px 20px; background:#4f46e5; color:#fff; text-decoration:none; border-radius:5px; margin-top:20px;">
+                  Acessar Novo App (EngageSuite)
+            </a></p>
+            <p>Atenciosamente,<br>Sistema Atitude Kids</p>
+          </div>
+        `;
+
+        await sendEmail(adminEmail, `Relatório Mensal de Pendências - ${reportDate}`, adminHtmlBody);
+        console.log(`Relatório mensal enviado para ${adminEmail} com ${allExpired.length} nomes.`);
+      }
+    }
+
+    // ##################################################################
+    // ## FIM DA MELHORIA
+    // ##################################################################
+
     const { rows: usersToFlag } = await pool.query(
       `SELECT id FROM cadastros WHERE status = 'apto' AND expires_at <= NOW()`
     );
