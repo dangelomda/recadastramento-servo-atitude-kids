@@ -409,7 +409,7 @@ ${baseHead(title)}
       
       <div id="menu-links-desktop" class="hidden md:flex md:items-center md:gap-4">
         <a href="/" class="hover:text-brand">Início</a>
-        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+        <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="hover:text-brand">Cadastro</a>
         <a href="/login" class="hover:text-brand">Login</a>
         <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
       </div>
@@ -417,7 +417,7 @@ ${baseHead(title)}
   </div>
   <div id="menu-links-mobile" class="hidden md:hidden bg-white border-t">
       <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
-      <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+      <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
       <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
       <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
   </div>
@@ -496,7 +496,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
       `
     : `
         <a href="/" class="hover:text-brand">Início</a>
-        <a href="/cadastro" class="hover:text-brand">Cadastro</a>
+        <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="hover:text-brand">Cadastro</a>
         <a href="/login" class="hover:text-brand">Login</a>
         <a href="/admin/login" class="ml-2 pl-4 border-l border-slate-200 hover:text-brand">Admin</a>
       `;
@@ -508,7 +508,7 @@ const adminPage = (title, bodyHtml, admin = null) => {
       `
     : `
         <a href="/" class="block text-center py-3 text-sm hover:bg-slate-100">Início</a>
-        <a href="/cadastro" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
+        <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="block text-center py-3 text-sm hover:bg-slate-100">Cadastro</a>
         <a href="/login" class="block text-center py-3 text-sm hover:bg-slate-100">Login</a>
         <a href="/admin/login" class="block text-center py-3 text-sm border-t hover:bg-slate-100">Admin</a>
       `;
@@ -730,24 +730,32 @@ const adminPage = (title, bodyHtml, admin = null) => {
 // =====================
 app.get('/', (_req, res) => {
   res.type('html').send(page('Início', `
-    <div class="grid md:grid-cols-2 gap-8 items-center">
-      <div>
-        <h1 class="text-3xl font-bold mb-4">Recadastramento Servo Atitude Kids</h1>
-        <p class="mb-4">Para servir no ministério infantil, é necessário anexar a <strong>Certidão de Antecedentes Criminais (CAC)</strong>, aceitar o termo de privacidade (LGPD) e criar uma senha.</p>
-        <div class="flex items-center gap-4">
-            <a href="/cadastro" class="btn-brand px-5 py-3 rounded-lg">Começar cadastro</a>
-            <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="text-sm link-brand underline">Emitir CAC no Gov.br</a>
+    <div class="grid md:grid-cols-2 gap-12 items-start">
+      <div class="pt-4">
+        <h1 class="text-4xl font-extrabold mb-6 text-slate-900 leading-tight">Recadastramento Servo Atitude Kids</h1>
+        <p class="text-lg text-slate-600 mb-8 leading-relaxed">
+          Para servir no ministério infantil, é necessário anexar a <strong>Certidão de Antecedentes Criminais (CAC)</strong>, aceitar o termo de privacidade (LGPD) e criar uma senha.
+        </p>
+        <div class="flex flex-wrap items-center gap-4">
+            <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="btn-brand px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-200 transition-all hover:-translate-y-1">Começar cadastro</a>
+            <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="text-sm font-medium link-brand hover:underline">Emitir CAC no Gov.br</a>
         </div>
       </div>
-      <div class="bg-white border rounded-xl p-6">
-        <h3 class="font-semibold mb-3">Funcionalidades do Sistema:</h3>
-        <ul class="space-y-2 text-sm">
-            <li>✔ Upload obrigatório da CAC (PDF)</li>
-            <li>✔ Extração automática de dados do documento</li>
-            <li>✔ Verificação automática de validade</li>
-            <li>✔ Painel individual para atualização de dados</li>
-            <li>✔ Painel de admin para acompanhamento geral</li>
-        </ul>
+      <div class="bg-white border border-slate-200 rounded-3xl p-2 shadow-xl shadow-slate-200/50 overflow-hidden">
+        <div class="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+          <h3 class="font-bold text-xl mb-2 text-slate-800">Migração para o Novo App</h3>
+          <p class="text-sm text-slate-500 mb-6 font-medium">Siga os passos abaixo no <strong>EngageSuite</strong>:</p>
+          <div class="space-y-6">
+            <div class="group">
+              <span class="inline-block px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold mb-3">PASSO 1</span>
+              <img src="/public/tutorial_novo_app_1.jpg" alt="Tutorial Passo 1" class="w-full border border-slate-200 rounded-xl shadow-sm transition-transform group-hover:scale-[1.02]">
+            </div>
+            <div class="group">
+              <span class="inline-block px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold mb-3">PASSO 2</span>
+              <img src="/public/tutorial_novo_app_2.jpg" alt="Tutorial Passo 2" class="w-full border border-slate-200 rounded-xl shadow-sm transition-transform group-hover:scale-[1.02]">
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `));
@@ -774,217 +782,11 @@ app.get('/termo-lgpd', (_req, res) => {
 // Cadastro de voluntário
 // =====================
 app.get('/cadastro', (_req, res) => {
-  // Corpo HTML da página de cadastro, incluindo o formulário e o modal oculto
-  const bodyHtml = `
-    <div class="max-w-xl mx-auto bg-white border rounded-xl p-6">
-      <h2 class="text-2xl font-semibold mb-4">Crie sua conta</h2>
-      <form method="post" action="/cadastro" enctype="multipart/form-data">
-        <div class="space-y-4">
-          <div><label class="block text-sm mb-1">Nome completo</label><input name="nome" required class="w-full border rounded px-3 py-2"/></div>
-          <div><label class="block text-sm mb-1">CPF</label><input name="cpf" required placeholder="000.000.000-00" class="w-full border rounded px-3 py-2"/></div>
-          
-          <div>
-            <label class="block text-sm mb-1">Rede</label>
-            <select name="rede" required class="w-full border rounded px-3 py-2">
-              <option value="">Selecione...</option>
-              <option value="Amarela">Amarela</option>
-              <option value="Vermelha">Vermelha</option>
-              <option value="Verde">Verde</option>
-              <option value="Branca">Branca</option>
-              <option value="Laranja">Laranja</option>
-              <option value="Azul">Azul</option>
-            </select>
-          </div>
-
-          <div><label class="block text-sm mb-1">E-mail</label><input name="email" type="email" required class="w-full border rounded px-3 py-2"/></div>
-          
-          <div><label class="block text-sm mb-1">Telefone (WhatsApp)</label><input name="telefone" type="tel" placeholder="(21) 99999-9999" required class="w-full border rounded px-3 py-2"/></div>
-          <div><label class="block text-sm mb-1">Nome do seu Coordenador</label><input name="nome_coordenador" required class="w-full border rounded px-3 py-2"/></div>
-
-          <div>
-            <label class="block text-sm mb-1">Senha</label>
-            <div class="relative password-toggle-container">
-              <input name="password" type="password" required class="w-full border rounded px-3 py-2 pr-10"/>
-              <span class="password-toggle-icon absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-500">
-                <svg class="eye-icon h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                <svg class="eye-slash-icon hidden h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
-              </span>
-            </div>
-          </div>
-          <div><label class="block text-sm mb-1">CAC (PDF até 2MB)</label><input type="file" name="cac_pdf" accept="application/pdf" required class="w-full"/></div>
-          
-          <div class="flex items-start gap-2">
-            <input type="checkbox" name="consent" required class="mt-1" id="consent-checkbox">
-            <label class="text-sm">Li e aceito o <button type="button" id="show-terms-btn" class="link-brand underline">termo de consentimento</button>.</label>
-          </div>
-          
-          <button type="submit" class="btn-brand px-5 py-2.5 rounded w-full">Cadastrar</button>
-        </div>
-      </form>
-    </div>
-
-    <div id="terms-modal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 hidden z-50">
-      <div class="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-        <h2 class="text-xl font-semibold mb-4">Termo de Consentimento e Privacidade</h2>
-        <p>Autorizo a ${ORG} a utilizar minha CAC exclusivamente para avaliação de aptidão ao ministério infantil (Kids), conforme LGPD.</p>
-        <ul class="list-disc ml-6 mt-3 space-y-1 text-sm">
-          <li>Acesso restrito e armazenamento seguro;</li>
-          <li>Sem compartilhamento com terceiros;</li>
-          <li>Guarda apenas durante a participação;</li>
-          <li>Posso solicitar acesso/retificação/eliminação a qualquer momento.</li>
-        </ul>
-        <div class="mt-6 flex justify-end gap-3">
-           <button type="button" id="close-modal-btn" class="text-sm px-4 py-2 border rounded text-gray-600 hover:bg-gray-100">Fechar</button>
-           <button type="button" id="accept-terms-btn" class="text-sm btn-brand px-4 py-2 rounded">Li e Aceito</button>
-        </div>
-      </div>
-    </div>
-    `;
-
-  // JavaScript para controlar o modal
-  const extraScripts = `
-    <script>
-      const showTermsBtn = document.getElementById('show-terms-btn');
-      const termsModal = document.getElementById('terms-modal');
-      const acceptTermsBtn = document.getElementById('accept-terms-btn');
-      const closeModalBtn = document.getElementById('close-modal-btn');
-      const consentCheckbox = document.getElementById('consent-checkbox');
-
-      if (showTermsBtn && termsModal && acceptTermsBtn && closeModalBtn && consentCheckbox) {
-        showTermsBtn.addEventListener('click', () => {
-          termsModal.classList.remove('hidden');
-        });
-
-        acceptTermsBtn.addEventListener('click', () => {
-          consentCheckbox.checked = true;
-          termsModal.classList.add('hidden');
-        });
-
-        closeModalBtn.addEventListener('click', () => {
-          termsModal.classList.add('hidden');
-        });
-
-        // Opcional: Fechar clicando fora do modal (na área escura)
-        termsModal.addEventListener('click', (event) => {
-          if (event.target === termsModal) {
-            termsModal.classList.add('hidden');
-          }
-        });
-      }
-    </script>
-    `;
-
-  // Renderiza a página com o corpo HTML e o JavaScript extra
-  res.type('html').send(page('Cadastro', bodyHtml, extraScripts));
+  res.redirect('https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home');
 });
 
-app.post('/cadastro', upload.single('cac_pdf'), async (req, res, next) => {
-  try {
-    const { nome, cpf, email, password, consent, rede, telefone, nome_coordenador } = req.body;
-    const cpfClean = (cpf || '').replace(/\D/g, '');
-    const emailClean = (email || '').trim().toLowerCase();
-    const telefoneClean = (telefone || '').replace(/\D/g, '');
-
-    const { rows: existingUsers } = await pool.query(
-      'SELECT id FROM cadastros WHERE cpf = $1 OR email = $2',
-      [cpfClean, emailClean]
-    );
-
-    if (existingUsers.length > 0) {
-      return res.status(409).send(page('Erro', '<p class="text-red-600 font-semibold">CPF ou E-mail já cadastrado. Se você já tem uma conta, por favor, <a href="/login" class="link-brand underline">faça o login</a>.</p>'));
-    }
-
-    if (!nome || !cpf || !email || !password || !rede || !telefone || !nome_coordenador || consent !== 'on' || !req.file)
-      return res.status(400).send(page('Erro', '<p>Preencha todos os campos, aceite o termo e anexe o PDF.</p>'));
-
-    if (!cpfValidator.isValid(cpfClean))
-      return res.status(400).send(page('Erro', '<p>CPF inválido.</p>'));
-
-    if (req.file.mimetype !== 'application/pdf')
-      return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
-
-    const password_hash = await bcrypt.hash(password, 10);
-    const pdfBuffer = req.file.buffer;
-
-    // ##################################################################
-    // ## INÍCIO DA ATUALIZAÇÃO: Capturar data_nascimento
-    // ##################################################################
-    const { cert_number, issued_at, expires_at, cac_result, pdf_cpf, data_nascimento } = await extractFromPdf(pdfBuffer);
-    // ##################################################################
-    // ## FIM DA ATUALIZAÇÃO
-    // ##################################################################
-
-    if (!cert_number || !issued_at || !issued_at.isValid()) {
-      return res.status(400).send(page('Erro', '<p class="text-red-600 font-semibold">O arquivo enviado não parece ser uma Certidão de Antecedentes Criminais válida. Por favor, emita o documento correto no site do Gov.br e tente novamente.</p>'));
-    }
-
-    // ##################################################################
-    // ## INÍCIO DA NOVA TRAVA: CAC > 90 DIAS
-    // ##################################################################
-    const diasDesdeEmissao = dayjs().diff(issued_at, 'day');
-    if (diasDesdeEmissao > 90) {
-      return res.status(400).send(page('Documento Antigo', `
-        <div class="bg-red-50 border-l-4 border-red-500 p-4">
-            <p class="font-bold text-red-700">Atenção: Este CAC é muito antigo.</p>
-            <p class="mt-2 text-sm text-red-800">Embora a validade interna seja de 6 meses, para realizarmos a <strong>validação de segurança na Polícia Federal</strong>, o documento precisa ter sido emitido há no máximo 90 dias.</p>
-            <p class="mt-2 text-sm text-red-800">Seu documento foi emitido em <strong>${issued_at.format('DD/MM/YYYY')}</strong> (${diasDesdeEmissao} dias atrás).</p>
-            <div class="mt-4">
-                <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="btn-brand px-4 py-2 rounded text-sm">Emitir CAC Novo no Gov.br</a>
-            </div>
-        </div>
-    `));
-    }
-    // ##################################################################
-    // ## FIM DA NOVA TRAVA
-    // ##################################################################
-
-    if (!pdf_cpf) {
-      return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O documento enviado não contém um número de CPF. Por favor, emita uma nova Certidão no site do Gov.br, garantindo que o CPF seja incluído.</p>'));
-    }
-    if (pdf_cpf !== cpfClean) {
-      return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF informado no formulário não corresponde ao CPF encontrado no documento PDF. Por favor, envie o seu próprio documento.</p>'));
-    }
-
-    const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
-    let status = 'em_revisao';
-    if (issued_at && expires_at) {
-      const now = dayjs();
-      if (now.isAfter(expires_at)) {
-        status = 'em_revisao'; // <-- MUDANÇA AQUI (era 'inapto', mas 'em_revisao' é melhor no cadastro)
-      } else if (cac_result === 'nada_consta') {
-        if (expires_at.diff(now, 'day') <= 15) {
-          status = 'atencao'; // <-- Mantido 'atencao' para "quase vencendo"
-        } else {
-          status = 'apto';
-        }
-      }
-    }
-    const key = `cac/${Date.now()}_${cert_number}.pdf`;
-    const { error: uploadError } = await supabase.storage
-      .from(process.env.SUPABASE_BUCKET)
-      .upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-    if (uploadError) throw uploadError;
-
-    // ##################################################################
-    // ## INÍCIO DA ATUALIZAÇÃO: Adicionar data_nascimento ao INSERT
-    // ##################################################################
-    const insert = `
-      INSERT INTO cadastros
-      (nome, cpf, email, password_hash, cert_number, issued_at, expires_at, status, pdf_path, pdf_sha256, cac_result, consent_signed_at, created_at, updated_at, rede, telefone, nome_coordenador, data_nascimento)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW(), $12, $13, $14, $15) RETURNING id
-    `;
-    const vals = [nome.trim(), cpfClean, emailClean, password_hash, cert_number, issued_at.toISOString(), expires_at.toISOString(), status, key, pdf_sha256, cac_result, rede, telefoneClean, nome_coordenador.trim(), (data_nascimento && data_nascimento.isValid()) ? data_nascimento.toISOString() : null];
-    // ##################################################################
-    // ## FIM DA ATUALIZAÇÃO
-    // ##################################################################
-
-    const { rows } = await pool.query(insert, vals);
-    const token = signToken({ volunteer_id: rows[0].id, email: emailClean });
-    res.cookie('vol_session', token, { httpOnly: true, sameSite: 'lax', secure: true });
-    res.send(page('Conta criada', `<p>Cadastro concluído! Protocolo ${rows[0].id}. <a href="/meu/painel" class="link-brand underline">Ir para meu painel</a></p>`));
-  } catch (e) {
-    next(e);
-  }
+app.post('/cadastro', (_req, res) => {
+  res.redirect('https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home');
 });
 
 // =====================
@@ -1125,9 +927,10 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
   // Checa se o status é 'em_revisao' E se o CAC está de fato expirado
   if (r.status === 'em_revisao' && r.expires_at && dayjs().isAfter(dayjs(r.expires_at))) {
     warningMessageHtml = `
-        <div class="mb-4 p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm">
-          <strong>Seu CAC precisa ser renovado.</strong>
-          <p class="mt-1">Notamos que sua Certidão de Antecedentes Criminais expirou. Por favor, emita um novo documento no site do Gov.br e envie o PDF abaixo para reativar seu cadastro.</p>
+        <div class="mb-4 p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm border-l-4 border-yellow-500">
+          <strong class="block mb-1">Seu CAC precisa ser renovado!</strong>
+          <p>Estamos migrando para uma nova plataforma. Para enviar seu novo documento, por favor, utilize o <strong>novo aplicativo EngageSuite</strong>.</p>
+          <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="inline-block mt-3 bg-yellow-600 text-white px-4 py-2 rounded-md hover:bg-yellow-700 font-semibold">Acessar Novo App</a>
         </div>
         `;
   }
@@ -1150,7 +953,9 @@ app.get('/meu/painel', requireVolunteer, setNoCacheHeaders, async (req, res) => 
               <option value="Azul" ${r.rede === 'Azul' ? 'selected' : ''}>Azul</option>
             </select>
           </div>
-          <div><label class="block text-sm">Nova CAC (PDF até 2MB, opcional)</label><input type="file" name="cac_pdf" accept="application/pdf" class="w-full"/></div>
+          <div class="p-3 bg-blue-50 border rounded-lg text-sm text-blue-800">
+            <p><strong>Renovação de Documentos:</strong> O envio de novo CAC agora deve ser feito exclusivamente através do <a href="https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home" class="underline font-bold">novo aplicativo (EngageSuite)</a>.</p>
+          </div>
           
           <div class="flex items-start gap-2">
             <input type="checkbox" name="consent" required class="mt-1" id="consent-checkbox-panel">
@@ -1511,82 +1316,8 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     }
 
     if (req.file) {
-      if (req.file.mimetype !== 'application/pdf') return res.status(400).send(page('Erro', '<p>Envie um PDF válido.</p>'));
-
-      const pdfBuffer = req.file.buffer;
-
-      // ##################################################################
-      // ## INÍCIO DA ATUALIZAÇÃO: Capturar data_nascimento (no update)
-      // ##################################################################
-      const { cert_number, issued_at, expires_at, cac_result, pdf_cpf, data_nascimento } = await extractFromPdf(pdfBuffer);
-      // ##################################################################
-      // ## FIM DA ATUALIZAÇÃO
-      // ##################################################################
-
-      // ##################################################################
-      // ## INÍCIO DA NOVA TRAVA: CAC > 90 DIAS (UPDATE)
-      // ##################################################################
-      if (issued_at && issued_at.isValid()) {
-        const diasDesdeEmissao = dayjs().diff(issued_at, 'day');
-        if (diasDesdeEmissao > 90) {
-          return res.status(400).send(page('Documento Antigo', `
-                <div class="bg-red-50 border-l-4 border-red-500 p-4">
-                    <p class="font-bold text-red-700">Não foi possível atualizar.</p>
-                    <p class="mt-2 text-sm text-red-800">Este CAC foi emitido há mais de 90 dias (em ${issued_at.format('DD/MM/YYYY')}).</p>
-                    <p class="mt-1 text-sm text-red-800">Para validar sua renovação, precisamos de um documento recente.</p>
-                    <div class="mt-4">
-                        <a href="https://www.gov.br/pt-br/servicos/emitir-certidao-de-antecedentes-criminais" target="_blank" class="btn-brand px-4 py-2 rounded text-sm">Emitir CAC Novo no Gov.br</a>
-                        <a href="/meu/painel" class="ml-3 text-sm underline text-slate-600">Voltar</a>
-                    </div>
-                </div>
-            `));
-        }
-      }
-      // ##################################################################
-      // ## FIM DA NOVA TRAVA
-      // ##################################################################
-
-      if (!pdf_cpf) {
-        return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O novo documento enviado não contém um CPF. Por favor, emita e envie uma Certidão que inclua seu CPF.</p>'));
-      }
-      if (pdf_cpf !== cpfClean) {
-        return res.status(400).send(page('Erro de Validação', '<p class="text-red-600 font-semibold">O CPF no novo documento não corresponde ao seu CPF cadastrado. Por favor, envie o seu próprio documento.</p>'));
-      }
-
-      const key = `cac/${Date.now()}_${cert_number || 'sem-numero'}.pdf`;
-      const { error: uploadError } = await supabase.storage.from(process.env.SUPABASE_BUCKET).upload(key, pdfBuffer, { contentType: 'application/pdf', upsert: true });
-      if (uploadError) throw uploadError;
-
-      const pdf_sha256 = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
-      updates.push(`cert_number=$${idx++}`); params.push(cert_number);
-      updates.push(`issued_at=$${idx++}`); params.push((issued_at && issued_at.isValid()) ? issued_at.toISOString() : null);
-      updates.push(`expires_at=$${idx++}`); params.push((expires_at && expires_at.isValid()) ? expires_at.toISOString() : null);
-      updates.push(`pdf_path=$${idx++}`); params.push(key);
-      updates.push(`pdf_sha256=$${idx++}`); params.push(pdf_sha256);
-      updates.push(`cac_result=$${idx++}`); params.push(cac_result);
-
-      // ##################################################################
-      // ## INÍCIO DA ATUALIZAÇÃO: Adicionar data_nascimento (no update)
-      // ##################################################################
-      updates.push(`data_nascimento=$${idx++}`); params.push((data_nascimento && data_nascimento.isValid()) ? data_nascimento.toISOString() : null);
-      // ##################################################################
-      // ## FIM DA ATUALIZAÇÃO
-      // ##################################################################
-
-      let newStatus = 'em_revisao';
-      if (issued_at && expires_at && issued_at.isValid()) {
-        const now = dayjs();
-        if (now.isAfter(expires_at)) {
-          newStatus = 'em_revisao'; // <-- MUDANÇA AQUI (era 'inapto')
-        } else if (cac_result === 'nada_consta') {
-          if (expires_at.diff(now, 'day') <= 15) {
-            newStatus = 'atencao';
-          } else {
-            newStatus = 'apto';
-          }
-        }
-      }
-      updates.push(`status=$${idx++}`); params.push(newStatus);
+      // Ignora o arquivo e redireciona (a UI já não mostra o input, mas por segurança no backend)
+      return res.redirect('https://www.engagesuite.com.br/o/igreja-batista-atitude-da-barra/home');
     }
 
     updates.push(`consent_signed_at=NOW()`);
@@ -1595,14 +1326,6 @@ app.post('/meu/atualizar', requireVolunteer, upload.single('cac_pdf'), async (re
     params.push(id);
     const q = `UPDATE cadastros SET ${updates.join(', ')} WHERE id=$${idx} RETURNING id`;
     await pool.query(q, params);
-
-    if (req.file && oldPdfPath) {
-      try {
-        await supabase.storage.from(process.env.SUPABASE_BUCKET).remove([oldPdfPath]);
-      } catch (removeError) {
-        console.error("Erro ao deletar PDF antigo, mas o cadastro foi atualizado:", removeError);
-      }
-    }
 
     res.redirect('/meu/painel');
   } catch (e) {
