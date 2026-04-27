@@ -1985,8 +1985,10 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
 
     for (const day of reminderDays) {
       const { rows: usersToRemind } = await pool.query(
-        `SELECT id, nome, email, issued_at FROM cadastros 
-     WHERE (status = 'apto' OR status = 'em_revisao') AND (issued_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date`
+        `SELECT id, nome, email, issued_at FROM cadastros
+     WHERE (status = 'apto' OR status = 'em_revisao')
+       AND (issued_at + INTERVAL '6 months')::date = (NOW() + INTERVAL '${day} days')::date
+       AND (last_reminder_sent_at IS NULL OR last_reminder_sent_at::date < NOW()::date)`
       );
 
       for (const user of usersToRemind) {
@@ -2006,6 +2008,7 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
                 `;
 
         await sendEmail(user.email, subject, htmlBody);
+        await pool.query(`UPDATE cadastros SET last_reminder_sent_at = NOW() WHERE id = $1`, [user.id]);
         emailsSent++;
 
         await sendPushNotification(user.id, {
@@ -2023,7 +2026,8 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
              WHERE status = 'em_revisao'
                AND expires_at IS NOT NULL
                AND expires_at::date <= NOW()::date
-               AND ((NOW()::date - expires_at::date) % 7) = 0`
+               AND ((NOW()::date - expires_at::date) % 7) = 0
+               AND (last_reminder_sent_at IS NULL OR last_reminder_sent_at::date < NOW()::date)`
     );
 
     for (const expiredUser of expiredUsersNeedingReminder) {
@@ -2042,6 +2046,7 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
             `;
 
       await sendEmail(expiredUser.email, 'Ação Necessária: Envio de CAC no Novo App', weeklyHtml);
+      await pool.query(`UPDATE cadastros SET last_reminder_sent_at = NOW() WHERE id = $1`, [expiredUser.id]);
       emailsSent++;
 
       await sendPushNotification(expiredUser.id, {
@@ -2181,6 +2186,7 @@ const startServer = async () => {
     console.log('Testando conexão com o banco de dados...');
     const client = await pool.connect();
     console.log('✅ Conexão com o banco de dados bem-sucedida.');
+    await client.query(`ALTER TABLE cadastros ADD COLUMN IF NOT EXISTS last_reminder_sent_at TIMESTAMPTZ`);
     client.release();
 
     app.listen(process.env.PORT || 3000, () => {
