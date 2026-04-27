@@ -1972,6 +1972,11 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
     return res.status(401).send('Unauthorized');
   }
 
+  // Responde imediatamente para evitar timeout do cron-job.org
+  res.json({ ok: true, message: 'Rotina de lembretes iniciada em background.' });
+
+  // Executa o processamento em background (sem bloquear a resposta HTTP)
+  (async () => {
   try {
     let emailsSent = 0;
     let pushSent = 0;
@@ -2127,18 +2132,12 @@ app.post('/cron/enviar-lembretes-renovacao', async (req, res) => {
       usersFlagged = idsToFlag.length;
     }
 
-    res.json({
-      ok: true,
-      message: `Rotina de lembretes executada.`,
-      emailsSent,
-      pushSent,
-      usersFlagged,
-    });
+    console.log(`Rotina de lembretes concluída: ${emailsSent} emails, ${pushSent} push, ${usersFlagged} flagged.`);
 
   } catch (e) {
     console.error('Erro na rotina de lembretes de renovação:', e);
-    res.status(500).send('Erro ao executar a rotina de lembretes.');
   }
+  })();
 });
 
 app.post('/cron/housekeeping', async (req, res) => {
